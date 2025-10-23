@@ -6,15 +6,18 @@ export class ListMetadata {
   private readonly _name: string;
   private readonly _icon: string;
   private readonly _color: string;
+  private readonly _description?: string;
 
-  constructor(name: string, icon: string, color: string) {
+  constructor(name: string, icon: string, color: string, description?: string) {
     this.validateName(name);
     this.validateIcon(icon);
     this.validateColor(color);
+    this.validateDescription(description);
     
     this._name = name;
     this._icon = icon;
     this._color = color;
+    this._description = description;
   }
 
   get name(): string {
@@ -29,25 +32,36 @@ export class ListMetadata {
     return this._color;
   }
 
+  get description(): string | undefined {
+    return this._description;
+  }
+
   /**
    * Creates a new ListMetadata with updated name
    */
   withName(newName: string): ListMetadata {
-    return new ListMetadata(newName, this._icon, this._color);
+    return new ListMetadata(newName, this._icon, this._color, this._description);
   }
 
   /**
    * Creates a new ListMetadata with updated icon
    */
   withIcon(newIcon: string): ListMetadata {
-    return new ListMetadata(this._name, newIcon, this._color);
+    return new ListMetadata(this._name, newIcon, this._color, this._description);
   }
 
   /**
    * Creates a new ListMetadata with updated color
    */
   withColor(newColor: string): ListMetadata {
-    return new ListMetadata(this._name, this._icon, newColor);
+    return new ListMetadata(this._name, this._icon, newColor, this._description);
+  }
+
+  /**
+   * Creates a new ListMetadata with updated description
+   */
+  withDescription(newDescription?: string): ListMetadata {
+    return new ListMetadata(this._name, this._icon, this._color, newDescription);
   }
 
   /**
@@ -97,19 +111,29 @@ export class ListMetadata {
   }
 
   /**
+   * Validates that the description is not too long
+   */
+  private validateDescription(description?: string): void {
+    if (description && description.length > 500) {
+      throw new Error('List description cannot exceed 500 characters');
+    }
+  }
+
+  /**
    * Checks equality with another ListMetadata
    */
   equals(other: ListMetadata): boolean {
     return this._name === other._name &&
            this._icon === other._icon &&
-           this._color === other._color;
+           this._color === other._color &&
+           this._description === other._description;
   }
 
   /**
    * Returns a string representation of the metadata
    */
   toString(): string {
-    return `ListMetadata(name="${this._name}", icon="${this._icon}", color="${this._color}")`;
+    return `ListMetadata(name="${this._name}", icon="${this._icon}", color="${this._color}", description="${this._description || ''}")`;
   }
 }
 

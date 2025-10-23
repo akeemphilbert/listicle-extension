@@ -5,6 +5,7 @@ export interface List {
   name: string;
   icon: string;
   color: string;
+  description?: string;
   created_at: string;
   updated_at: string;
 }

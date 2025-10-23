@@ -25,12 +25,13 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param name The name of the list
    * @param icon The icon for the list
    * @param color The color of the list
+   * @param description Optional description for the list
    * @param id Optional ID (auto-generated if not provided)
    * @param version Optional version (defaults to 1)
    */
-  constructor(name: string, icon: string, color: string, id?: string, version: number = 1) {
+  constructor(name: string, icon: string, color: string, description?: string, id?: string, version: number = 1) {
     super(id || List.generateId(), version);
-    this._metadata = new ListMetadata(name, icon, color);
+    this._metadata = new ListMetadata(name, icon, color, description);
     this._createdAt = new Date();
     this._updatedAt = new Date();
     this._deleted = false;
@@ -41,14 +42,16 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param name The name of the list
    * @param icon The icon for the list
    * @param color The color of the list
+   * @param description Optional description for the list
    * @returns A new List instance with ListCreatedEvent emitted
    */
   static create<T extends Entity>(
     name: string,
     icon: string,
-    color: string
+    color: string,
+    description?: string
   ): List<T> {
-    const list = new List<T>(name, icon, color);
+    const list = new List<T>(name, icon, color, description);
     
     const event = createListCreatedEvent(
       list,
@@ -67,7 +70,7 @@ export class List<T extends Entity> extends AggregateRoot {
    * @returns A reconstructed List instance
    */
   static fromEvents<T extends Entity>(id: string, events: DomainEvent[]): List<T> {
-    const list = new List<T>('', '', '', id, 1);
+    const list = new List<T>('', '', '', undefined, id, 1);
     list.hydrateAggregate(events);
     return list;
   }
