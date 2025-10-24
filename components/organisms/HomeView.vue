@@ -24,10 +24,10 @@
 </template>
 
 <script setup lang="ts">
-import type { List } from '@/composables/useLists';
+import type { ListProjection } from '@/stores/listsStore';
 
 const props = defineProps<{
-  lists: List[];
+  lists: ListProjection[];
   taskCounts: Record<string, number>;
 }>();
 

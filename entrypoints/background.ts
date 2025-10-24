@@ -56,19 +56,27 @@ export default defineBackground(() => {
         return { success: false };
       }
       
-      // TODO: Get list details from storage
-      const listName = 'Current List'; // This should come from the list storage
-      const listDescription = ''; // This should come from the list storage
+      // Get list details from storage
+      const list = await listService.loadListFromEvents(activeListId);
+      if (!list) {
+        return { success: false };
+      }
       
-      // Scan the page
-      const items = await promptApiService.scanPage(listName, listDescription, tabId);
+      // Send message to content script to scan the page
+      const result = await messaging.send('scan-page-content', {
+        listName: list.name,
+        listDescription: list.metadata.description || '',
+        tabId: tabId
+      });
+      
+      const items = result?.items || [];
       
       if (items.length > 0) {
         // Notify content script about found items
         await messaging.sendFireAndForget('items-found', {
           items,
           tabId,
-          listName
+          listName: list.name
         });
         
         // Show notification
@@ -76,7 +84,7 @@ export default defineBackground(() => {
           type: 'basic',
           iconUrl: 'icon/48.png',
           title: 'Items Found!',
-          message: `Found ${items.length} items for "${listName}"`
+          message: `Found ${items.length} items for "${list.name}"`
         });
       }
       
@@ -185,8 +193,14 @@ export default defineBackground(() => {
       const listName = 'Test Recipes';
       const listDescription = 'A list for testing recipe extraction from web pages. Focus on finding recipes, ingredients, cooking instructions, and food-related content.';
       
-      // Trigger scan
-      const items = await promptApiService.scanPage(listName, listDescription, tabId);
+      // Send message to content script to scan the page
+      const result = await messaging.send('scan-page-content', {
+        listName: listName,
+        listDescription: listDescription,
+        tabId: tabId
+      });
+      
+      const items = result?.items || [];
       
       return { success: true, items };
     } catch (error) {

@@ -17,7 +17,7 @@
     <div class="app__content">
       <HomeView
           v-if="currentView === 'home'"
-          :lists="lists"
+          :lists="activeListsArray"
           :task-counts="taskCounts"
           @select-list="handleSelectList"
       />
@@ -70,16 +70,53 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { storeToRefs } from 'pinia';
 import Header from '@/components/organisms/Header.vue';
 import HomeView from '@/components/organisms/HomeView.vue';
 import TaskList from '@/components/organisms/TaskList.vue';
-import { useLists } from '@/composables/useLists';
+import { useListsStore, type ListProjection } from '@/stores/listsStore';
+import { useEventStore } from '@/stores/eventStore';
+import { listService } from '@/services/listService';
 import { useTasks } from '@/composables/useTasks';
 import { messaging } from '@/utils/messaging';
 import { microformatExtractor } from '@/services/microformatExtractor';
 
-const { lists, createList } = useLists();
+// Convert Dexie observables to reactive refs
+const activeListsArray = ref<ListProjection[]>([]);
+
+// Subscribe to the observable after store initialization
+let unsubscribeActiveLists: any = null;
+
+// Store references - will be initialized in onMounted
+let eventStore: any = null;
+let listsStore: any = null;
+
+// Initialize services and stores
+onMounted(async () => {
+  // Initialize stores first
+  eventStore = useEventStore();
+  listsStore = useListsStore();
+  
+  await listService.initialize();
+  await eventStore.initialize();
+  await listsStore.initialize();
+  
+  // Subscribe to active lists after initialization
+  if (listsStore.activeLists) {
+    unsubscribeActiveLists = listsStore.activeLists.subscribe((lists: ListProjection[]) => {
+      activeListsArray.value = lists;
+    });
+  }
+});
+
+// Cleanup subscription on unmount
+onUnmounted(() => {
+  if (unsubscribeActiveLists) {
+    unsubscribeActiveLists.unsubscribe();
+  }
+});
+
 const selectedListId = ref<string | null>(null);
 const currentView = ref<'home' | 'list'>('home');
 const { tasks, createTask, toggleTask, deleteTask } = useTasks(selectedListId);
@@ -92,12 +129,12 @@ const listInput = ref<HTMLInputElement | null>(null);
 const isScanning = ref(false);
 
 const selectedList = computed(() => {
-  return lists.value.find(list => list.id === selectedListId.value) || null;
+  return activeListsArray.value.find(list => list.id === selectedListId.value) || null;
 });
 
 const taskCounts = computed(() => {
   const counts: Record<string, number> = {};
-  lists.value.forEach(list => {
+  activeListsArray.value.forEach(list => {
     counts[list.id] = 0;
   });
   return counts;
@@ -118,24 +155,6 @@ const triggerRecipeScan = async () => {
   
   try {
     isScanning.value = true;
-    
-    // Get or create a test recipe list
-    let recipeList = lists.value.find(l => l.name === 'Test Recipes');
-    if (!recipeList) {
-      const newList = await createList({
-        name: 'Test Recipes',
-        description: 'A list for recipes',
-        icon: '🍳',
-        color: '#FF6B6B'
-      });
-      if (!newList) {
-        alert('Failed to create test recipe list');
-        return;
-      }
-      recipeList = newList;
-    }
-    
-    // Note: We're using microformatExtractor directly, so no need to set active list
     
     // Get current tab
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -450,17 +469,22 @@ const handleAddItem = async () => {
 const handleAddList = async () => {
   if (!newListName.value.trim()) return;
 
-  const newList = await createList({
-    name: newListName.value,
-    icon: 'list',
-    color: '#808080'
-  });
+  const newList = await listService.createList(
+    newListName.value,
+    'list',
+    '#808080'
+  );
 
   newListName.value = '';
   showAddListModal.value = false;
 
   if (newList) {
-    handleSelectList(newList.id);
+    // Wait for the projection to update
+    await nextTick();
+    const projection = activeListsArray.value.find(l => l.id === newList.id);
+    if (projection) {
+      handleSelectList(projection.id);
+    }
   }
 };
 
@@ -478,12 +502,12 @@ watch(showAddListModal, async (show) => {
   }
 });
 
-watch(lists, async () => {
-  if (lists.value.length === 0) {
-    await createList({ name: 'Inbox', icon: 'inbox', color: '#4073ff' });
+watch(activeListsArray, async () => {
+  if (activeListsArray.value.length === 0) {
+    await listService.createList('Inbox', 'inbox', '#4073ff');
   }
-  if (lists.value.length > 0 && !selectedListId.value && currentView.value === 'list') {
-    selectedListId.value = lists.value[0].id;
+  if (activeListsArray.value.length > 0 && !selectedListId.value && currentView.value === 'list') {
+    selectedListId.value = activeListsArray.value[0].id;
   }
 }, { immediate: true });
 </script>

@@ -1,5 +1,6 @@
 import { microformatExtractor } from '../services/microformatExtractor';
 import { messaging } from '../utils/messaging';
+import { promptApiService } from '../services/promptApiService';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -10,6 +11,11 @@ export default defineContentScript({
     messaging.on('scan-page', async (payload) => {
       await performPageScan(payload.tabId);
       return { success: true };
+    });
+    
+    messaging.on('scan-page-content', async (payload) => {
+      const items = await promptApiService.scanPage(payload.listName, payload.listDescription, payload.tabId);
+      return { items };
     });
     
     messaging.on('items-found', async (payload) => {
