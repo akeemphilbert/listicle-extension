@@ -89,18 +89,26 @@
 
     <div v-if="showAddListModal" class="modal-overlay" @click="showAddListModal = false">
       <div class="modal" @click.stop>
-        <h2 class="modal__title">Create New List</h2>
-        <input
-            v-model="newListName"
-            type="text"
-            placeholder="List name"
-            class="modal__input"
-            @keyup.enter="handleAddList"
-            ref="listInput"
-        />
-        <div class="modal__actions">
-          <button class="modal__btn modal__btn--primary" @click="handleAddList">Create list</button>
-          <button class="modal__btn" @click="showAddListModal = false">Cancel</button>
+        <div class="modal__content">
+          <h2 class="modal__title">Create New List</h2>
+          <input
+              v-model="newListName"
+              type="text"
+              placeholder="List name"
+              class="modal__input"
+              @keyup.enter="handleAddList"
+              ref="listInput"
+          />
+          <textarea
+              v-model="newListDescription"
+              placeholder="List description (optional)"
+              class="modal__textarea"
+              rows="3"
+          ></textarea>
+          <div class="modal__actions">
+            <button class="modal__btn modal__btn--primary" @click="handleAddList">Create list</button>
+            <button class="modal__btn" @click="showAddListModal = false">Cancel</button>
+          </div>
         </div>
       </div>
     </div>
@@ -163,6 +171,7 @@ const showAddItemModal = ref(false);
 const showAddListModal = ref(false);
 const newItemTitle = ref('');
 const newListName = ref('');
+const newListDescription = ref('');
 const itemInput = ref<HTMLInputElement | null>(null);
 const listInput = ref<HTMLInputElement | null>(null);
 const scannedItems = ref<ScannedItem[]>([]);
@@ -215,10 +224,12 @@ const handleAddList = async () => {
   const newList = await listService.createList(
     newListName.value,
     'list',
-    '#808080'
+    '#808080',
+    newListDescription.value.trim() || undefined
   );
 
   newListName.value = '';
+  newListDescription.value = '';
   showAddListModal.value = false;
 
   if (newList) {
@@ -385,14 +396,20 @@ watch(activeListsArray, async () => {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 1rem;
 }
 
 .modal {
   background: white;
   border-radius: 8px;
-  padding: 1.5rem;
-  width: 500px;
+  padding: 0;
+  width: 100%;
+  max-width: 500px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal__content {
+  padding: 2rem;
 }
 
 .modal__title {
@@ -410,9 +427,28 @@ watch(activeListsArray, async () => {
   font-size: 1rem;
   margin-bottom: 1rem;
   font-family: inherit;
+  box-sizing: border-box;
 }
 
 .modal__input:focus {
+  outline: none;
+  border-color: #db4c3f;
+}
+
+.modal__textarea {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+  box-sizing: border-box;
+}
+
+.modal__textarea:focus {
   outline: none;
   border-color: #db4c3f;
 }

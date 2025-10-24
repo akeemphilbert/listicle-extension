@@ -17,6 +17,13 @@
             <h3 class="list-card__name">{{ list.name }}</h3>
             <p class="list-card__count">{{ getTaskCount(list.id) }} items</p>
           </div>
+          <button 
+            class="list-card__delete"
+            @click.stop="$emit('delete-list', list.id)"
+            title="Delete list"
+          >
+            🗑️
+          </button>
         </div>
       </div>
     </div>
@@ -33,6 +40,7 @@ const props = defineProps<{
 
 defineEmits<{
   'select-list': [id: string];
+  'delete-list': [id: string];
 }>();
 
 const iconMap: Record<string, string> = {
@@ -94,6 +102,7 @@ const getTaskCount = (listId: string) => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  position: relative;
 }
 
 .list-card:hover {
@@ -127,5 +136,28 @@ const getTaskCount = (listId: string) => {
   font-size: 0.8125rem;
   color: #666;
   margin: 0;
+}
+
+.list-card__delete {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease, background-color 0.2s ease;
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.list-card:hover .list-card__delete {
+  opacity: 1;
+}
+
+.list-card__delete:hover {
+  background-color: #feeeed;
 }
 </style>

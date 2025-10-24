@@ -12,6 +12,7 @@
         :task-count="getTaskCount(list.id)"
         :active="selectedListId === list.id"
         @select="$emit('select-list', $event)"
+        @delete="$emit('delete-list', $event)"
       />
     </div>
 
@@ -32,12 +33,10 @@
 import ListItem from '../molecules/ListItem.vue';
 import BaseButton from '../atoms/BaseButton.vue';
 import BaseIcon from '../atoms/BaseIcon.vue';
-import type { Database } from '../../lib/types/database';
-
-type List = Database['public']['Tables']['lists']['Row'];
+import type { ListProjection } from '../../stores/listsStore';
 
 const props = defineProps<{
-  lists: List[];
+  lists: ListProjection[];
   selectedListId: string | null;
   taskCounts: Record<string, number>;
 }>();
@@ -45,6 +44,7 @@ const props = defineProps<{
 defineEmits<{
   'select-list': [id: string];
   'add-list': [];
+  'delete-list': [id: string];
 }>();
 
 const getTaskCount = (listId: string) => {

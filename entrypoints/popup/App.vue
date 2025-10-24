@@ -20,6 +20,7 @@
           :lists="activeListsArray"
           :task-counts="taskCounts"
           @select-list="handleSelectList"
+          @delete-list="handleDeleteList"
       />
 
       <TaskList
@@ -51,18 +52,26 @@
 
     <div v-if="showAddListModal" class="modal-overlay" @click="showAddListModal = false">
       <div class="modal" @click.stop>
-        <h2 class="modal__title">Create New List</h2>
-        <input
-            v-model="newListName"
-            type="text"
-            placeholder="List name"
-            class="modal__input"
-            @keyup.enter="handleAddList"
-            ref="listInput"
-        />
-        <div class="modal__actions">
-          <button class="modal__btn modal__btn--primary" @click="handleAddList">Create list</button>
-          <button class="modal__btn" @click="showAddListModal = false">Cancel</button>
+        <div class="modal__content">
+          <h2 class="modal__title">Create New List</h2>
+          <input
+              v-model="newListName"
+              type="text"
+              placeholder="List name"
+              class="modal__input"
+              @keyup.enter="handleAddList"
+              ref="listInput"
+          />
+          <textarea
+              v-model="newListDescription"
+              placeholder="List description (optional)"
+              class="modal__textarea"
+              rows="3"
+          ></textarea>
+          <div class="modal__actions">
+            <button class="modal__btn modal__btn--primary" @click="handleAddList">Create list</button>
+            <button class="modal__btn" @click="showAddListModal = false">Cancel</button>
+          </div>
         </div>
       </div>
     </div>
@@ -78,6 +87,7 @@ import TaskList from '@/components/organisms/TaskList.vue';
 import { useListsStore, type ListProjection } from '@/stores/listsStore';
 import { useEventStore } from '@/stores/eventStore';
 import { listService } from '@/services/listService';
+import { db } from '@/services/database';
 import { useTasks } from '@/composables/useTasks';
 import { messaging } from '@/utils/messaging';
 import { microformatExtractor } from '@/services/microformatExtractor';
@@ -102,19 +112,38 @@ onMounted(async () => {
   await eventStore.initialize();
   await listsStore.initialize();
   
+  // Debug: Check what's actually in the database
+  console.log('Checking database contents...');
+  const allProjections = await db.listProjections.toArray();
+  console.log('All projections in DB:', allProjections);
+  const activeProjections = allProjections.filter(list => !list.deleted);
+  console.log('Active projections in DB:', activeProjections);
+  
   // Subscribe to active lists after initialization
-  if (listsStore.activeLists) {
-    unsubscribeActiveLists = listsStore.activeLists.subscribe((lists: ListProjection[]) => {
-      activeListsArray.value = lists;
-    });
+  console.log('Setting up lists store...');
+  console.log('Lists store methods:', Object.keys(listsStore));
+  
+  // Check if refreshLists exists
+  if (typeof listsStore.refreshLists === 'function') {
+    console.log('refreshLists function found, calling it...');
+    await listsStore.refreshLists();
+    activeListsArray.value = listsStore.activeLists;
+  } else {
+    console.log('refreshLists function not found, using manual approach...');
+    const manualLists = await listsStore.getActiveLists();
+    activeListsArray.value = manualLists;
   }
+  
+  // Watch for changes to activeLists and update our local array
+  watch(() => listsStore.activeLists, (newLists) => {
+    console.log('Lists store updated:', newLists);
+    activeListsArray.value = newLists;
+  }, { deep: true });
 });
 
-// Cleanup subscription on unmount
+// Cleanup on unmount
 onUnmounted(() => {
-  if (unsubscribeActiveLists) {
-    unsubscribeActiveLists.unsubscribe();
-  }
+  // No cleanup needed for the new approach
 });
 
 const selectedListId = ref<string | null>(null);
@@ -124,6 +153,7 @@ const showAddItemModal = ref(false);
 const showAddListModal = ref(false);
 const newItemTitle = ref('');
 const newListName = ref('');
+const newListDescription = ref('');
 const itemInput = ref<HTMLInputElement | null>(null);
 const listInput = ref<HTMLInputElement | null>(null);
 const isScanning = ref(false);
@@ -148,6 +178,39 @@ const showHome = () => {
 const handleSelectList = (id: string) => {
   selectedListId.value = id;
   currentView.value = 'list';
+};
+
+const handleDeleteList = async (listId: string) => {
+  if (confirm('Are you sure you want to delete this list? This action cannot be undone.')) {
+    console.log('Deleting list:', listId);
+    
+    // Debug: Check if list exists in projections
+    const listExists = activeListsArray.value.find(l => l.id === listId);
+    console.log('List exists in projections:', listExists);
+    
+    // Debug: Check if events exist for this list
+    const events = await eventStore.getEventsByAggregateId(listId);
+    console.log('Events for list:', events);
+    
+    const success = await listService.deleteList(listId);
+    console.log('Delete result:', success);
+    
+    if (success) {
+      console.log('List deleted successfully');
+      // Refresh the lists
+      await listsStore.refreshLists();
+      activeListsArray.value = listsStore.activeLists;
+      
+      // If we deleted the currently selected list, go back to home
+      if (selectedListId.value === listId) {
+        selectedListId.value = null;
+        currentView.value = 'home';
+      }
+    } else {
+      console.error('Failed to delete list');
+      alert('Failed to delete list. Please try again.');
+    }
+  }
 };
 
 const triggerRecipeScan = async () => {
@@ -472,10 +535,12 @@ const handleAddList = async () => {
   const newList = await listService.createList(
     newListName.value,
     'list',
-    '#808080'
+    '#808080',
+    newListDescription.value.trim() || undefined
   );
 
   newListName.value = '';
+  newListDescription.value = '';
   showAddListModal.value = false;
 
   if (newList) {
@@ -551,14 +616,20 @@ watch(activeListsArray, async () => {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 1rem;
 }
 
 .modal {
   background: white;
   border-radius: 8px;
-  padding: 1.5rem;
-  width: 500px;
+  padding: 0;
+  width: 100%;
+  max-width: 500px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal__content {
+  padding: 2rem;
 }
 
 .modal__title {
@@ -576,9 +647,28 @@ watch(activeListsArray, async () => {
   font-size: 1rem;
   margin-bottom: 1rem;
   font-family: inherit;
+  box-sizing: border-box;
 }
 
 .modal__input:focus {
+  outline: none;
+  border-color: #db4c3f;
+}
+
+.modal__textarea {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+  box-sizing: border-box;
+}
+
+.modal__textarea:focus {
   outline: none;
   border-color: #db4c3f;
 }
