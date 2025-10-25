@@ -18,7 +18,6 @@ export class List<T extends Entity> extends AggregateRoot {
   private _metadata: ListMetadata;
   private _createdAt: Date;
   private _updatedAt: Date;
-  private _deleted: boolean;
 
   /**
    * Public constructor for creating new lists
@@ -34,7 +33,6 @@ export class List<T extends Entity> extends AggregateRoot {
     this._metadata = new ListMetadata(name, icon, color, description);
     this._createdAt = new Date();
     this._updatedAt = new Date();
-    this._deleted = false;
   }
 
   /**
@@ -80,10 +78,6 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param newName The new name for the list
    */
   rename(newName: string): void {
-    if (this._deleted) {
-      throw new Error('Cannot rename a deleted list');
-    }
-    
     const oldName = this._metadata.name;
     if (oldName === newName) {
       return; // No change needed
@@ -107,10 +101,6 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param newIcon The new icon for the list
    */
   changeIcon(newIcon: string): void {
-    if (this._deleted) {
-      throw new Error('Cannot change icon of a deleted list');
-    }
-    
     const oldIcon = this._metadata.icon;
     if (oldIcon === newIcon) {
       return; // No change needed
@@ -134,10 +124,6 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param newColor The new color for the list
    */
   changeColor(newColor: string): void {
-    if (this._deleted) {
-      throw new Error('Cannot change color of a deleted list');
-    }
-    
     const oldColor = this._metadata.color;
     if (oldColor === newColor) {
       return; // No change needed
@@ -160,12 +146,7 @@ export class List<T extends Entity> extends AggregateRoot {
    * Deletes the list
    */
   delete(): void {
-    if (this._deleted) {
-      return; // Already deleted
-    }
-
     // Update the state
-    this._deleted = true;
     this._updatedAt = new Date();
 
     const event = createListDeletedEvent(
@@ -179,18 +160,17 @@ export class List<T extends Entity> extends AggregateRoot {
 
   /**
    * Adds an item to the list
-   * @param item The item to add
+   * @param itemId The ID of the item to add
    */
-  addItem(item: T): void {
-    if (this._deleted) {
-      throw new Error('Cannot add items to a deleted list');
-    }
-
+  addItem(itemId: string): void {
+    // Create a mock item for the TripleEvent (we only need the ID)
+    const mockItem = { id: itemId } as T;
+    
     // Create TripleEvent to link item to list
     const tripleEvent = createTripleEvent(
       this,
       Predicate.CONTAINS,
-      item,
+      mockItem,
       this.id,
       this.sequenceNo + 1
     );
@@ -203,10 +183,6 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param itemId The ID of the item to remove
    */
   removeItem(itemId: string): void {
-    if (this._deleted) {
-      throw new Error('Cannot remove items from a deleted list');
-    }
-
     // Create a mock item for the TripleEvent (we only need the ID)
     const mockItem = { id: itemId } as T;
     
@@ -228,10 +204,6 @@ export class List<T extends Entity> extends AggregateRoot {
    * @param newOrder The new order position
    */
   reorderItem(itemId: string, newOrder: number): void {
-    if (this._deleted) {
-      throw new Error('Cannot reorder items in a deleted list');
-    }
-
     // Create a mock item for the TripleEvent
     const mockItem = { id: itemId } as T;
     
@@ -268,10 +240,6 @@ export class List<T extends Entity> extends AggregateRoot {
     return this._updatedAt;
   }
 
-  get deleted(): boolean {
-    return this._deleted;
-  }
-
   get metadata(): ListMetadata {
     return this._metadata;
   }
@@ -305,19 +273,15 @@ export class List<T extends Entity> extends AggregateRoot {
     this._metadata = list._metadata;
     this._createdAt = event.timestamp;
     this._updatedAt = event.timestamp;
-    this._deleted = false;
   }
 
   private applyListUpdated(event: DomainEvent): void {
     const list = event.data as List<any>;
     this._metadata = list._metadata;
     this._updatedAt = event.timestamp;
-    this._deleted = list._deleted;
   }
 
   private applyListDeleted(event: DomainEvent): void {
-    const list = event.data as List<any>;
-    this._deleted = list._deleted;
     this._updatedAt = event.timestamp;
   }
 

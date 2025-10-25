@@ -8,16 +8,26 @@ export class ListMetadata {
   private readonly _color: string;
   private readonly _description?: string;
 
-  constructor(name: string, icon: string, color: string, description?: string) {
-    this.validateName(name);
-    this.validateIcon(icon);
-    this.validateColor(color);
-    this.validateDescription(description);
+  constructor(name: string, icon: string, color: string, description?: string, hydrate: boolean = true) {
+    if (!hydrate) {
+      this.validateName(name);
+      this.validateIcon(icon);
+      this.validateColor(color);
+      this.validateDescription(description);
+    }
     
     this._name = name;
     this._icon = icon;
     this._color = color;
     this._description = description;
+  }
+
+  /**
+   * Creates a ListMetadata instance for hydration
+   * Skips validation to allow empty values during instantiation
+   */
+  static createForHydration(name: string, icon: string, color: string, description?: string): ListMetadata {
+    return new ListMetadata(name, icon, color, description, true);
   }
 
   get name(): string {
@@ -40,28 +50,39 @@ export class ListMetadata {
    * Creates a new ListMetadata with updated name
    */
   withName(newName: string): ListMetadata {
-    return new ListMetadata(newName, this._icon, this._color, this._description);
+    return new ListMetadata(newName, this._icon, this._color, this._description, false);
   }
 
   /**
    * Creates a new ListMetadata with updated icon
    */
   withIcon(newIcon: string): ListMetadata {
-    return new ListMetadata(this._name, newIcon, this._color, this._description);
+    return new ListMetadata(this._name, newIcon, this._color, this._description, false);
   }
 
   /**
    * Creates a new ListMetadata with updated color
    */
   withColor(newColor: string): ListMetadata {
-    return new ListMetadata(this._name, this._icon, newColor, this._description);
+    return new ListMetadata(this._name, this._icon, newColor, this._description, false);
   }
 
   /**
    * Creates a new ListMetadata with updated description
    */
   withDescription(newDescription?: string): ListMetadata {
-    return new ListMetadata(this._name, this._icon, this._color, newDescription);
+    return new ListMetadata(this._name, this._icon, this._color, newDescription, false);
+  }
+
+  /**
+   * Validates all metadata properties
+   * Call this method when the list is ready to be validated (e.g., after hydration)
+   */
+  validate(): void {
+    this.validateName(this._name);
+    this.validateIcon(this._icon);
+    this.validateColor(this._color);
+    this.validateDescription(this._description);
   }
 
   /**

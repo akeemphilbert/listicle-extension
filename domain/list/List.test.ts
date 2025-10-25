@@ -17,17 +17,17 @@ describe('List', () => {
       {
         name: 'creates list with valid parameters',
         input: { name: 'Test List', icon: '📝', color: '#ff6b6b' },
-        expected: { name: 'Test List', icon: '📝', color: '#ff6b6b', deleted: false }
+        expected: { name: 'Test List', icon: '📝', color: '#ff6b6b' }
       },
       {
         name: 'creates list with custom ID',
         input: { name: 'Custom List', icon: '🎯', color: 'blue', id: 'custom-id' },
-        expected: { name: 'Custom List', icon: '🎯', color: 'blue', deleted: false }
+        expected: { name: 'Custom List', icon: '🎯', color: 'blue' }
       },
       {
         name: 'creates list with version',
         input: { name: 'Versioned List', icon: '📊', color: 'green', id: 'v-list', version: 5 },
-        expected: { name: 'Versioned List', icon: '📊', color: 'green', deleted: false }
+        expected: { name: 'Versioned List', icon: '📊', color: 'green' }
       }
     ];
 
@@ -44,7 +44,6 @@ describe('List', () => {
         expect(list.name).toBe(tc.expected.name);
         expect(list.icon).toBe(tc.expected.icon);
         expect(list.color).toBe(tc.expected.color);
-        expect(list.deleted).toBe(tc.expected.deleted);
         expect(list.itemCount).toBe(0);
         expect(list.getItemReferences()).toEqual([]);
       });
@@ -105,13 +104,6 @@ describe('List', () => {
       });
     });
 
-    it('throws error when trying to rename deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.rename('New Name');
-      }).toThrow('Cannot rename a deleted list');
-    });
   });
 
   describe('changeIcon', () => {
@@ -150,13 +142,6 @@ describe('List', () => {
       });
     });
 
-    it('throws error when trying to change icon of deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.changeIcon('🎯');
-      }).toThrow('Cannot change icon of a deleted list');
-    });
   });
 
   describe('changeColor', () => {
@@ -200,13 +185,6 @@ describe('List', () => {
       });
     });
 
-    it('throws error when trying to change color of deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.changeColor('#00ff00');
-      }).toThrow('Cannot change color of a deleted list');
-    });
   });
 
   describe('delete', () => {
@@ -219,12 +197,12 @@ describe('List', () => {
     const testCases = [
       {
         name: 'deletes list successfully',
-        expected: { deleted: true, eventsEmitted: 1 }
+        expected: { eventsEmitted: 1 }
       },
       {
-        name: 'does not emit event when already deleted',
-        setup: () => list.delete(),
-        expected: { deleted: true, eventsEmitted: 0 }
+        name: 'emits event on delete',
+        setup: () => {},
+        expected: { eventsEmitted: 1 }
       }
     ];
 
@@ -236,7 +214,6 @@ describe('List', () => {
         
         list.delete();
         
-        expect(list.deleted).toBe(tc.expected.deleted);
         expect(list.uncommittedEvents.length - initialEventCount).toBe(tc.expected.eventsEmitted);
         
         if (tc.expected.eventsEmitted > 0) {
@@ -290,13 +267,6 @@ describe('List', () => {
       }).toThrow(`Item ${item.id} is already in the list`);
     });
 
-    it('throws error when trying to add item to deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.addItem(item);
-      }).toThrow('Cannot add items to a deleted list');
-    });
   });
 
   describe('removeItem', () => {
@@ -328,13 +298,6 @@ describe('List', () => {
       }).toThrow('Item non-existent-id is not in the list');
     });
 
-    it('throws error when trying to remove item from deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.removeItem(item.id);
-      }).toThrow('Cannot remove items from a deleted list');
-    });
   });
 
   describe('reorderItem', () => {
@@ -375,13 +338,6 @@ describe('List', () => {
       }).toThrow('Item non-existent-id is not in the list');
     });
 
-    it('throws error when trying to reorder item in deleted list', () => {
-      list.delete();
-      
-      expect(() => {
-        list.reorderItem(item1.id, 1);
-      }).toThrow('Cannot reorder items in a deleted list');
-    });
   });
 
   describe('getItemReferences', () => {

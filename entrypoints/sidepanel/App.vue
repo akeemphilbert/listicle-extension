@@ -117,51 +117,91 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
-import { storeToRefs } from 'pinia';
 import Header from '@/components/organisms/Header.vue';
 import HomeView from '@/components/organisms/HomeView.vue';
 import TaskList from '@/components/organisms/TaskList.vue';
 import Settings from '@/components/organisms/Settings.vue';
-import { useListsStore, type ListProjection } from '@/stores/listsStore';
 import { useEventStore } from '@/stores/eventStore';
 import { listService } from '@/services/listService';
+import { itemService } from '@/services/itemService';
+import { db, type ListProjection } from '@/services/database';
 import { useTasks } from '@/composables/useTasks';
 import { messaging } from '@/utils/messaging';
 import { ScannedItem } from '@/services/userPreferences';
 
-// Convert Dexie observables to reactive refs
+// Direct database access with hooks
 const activeListsArray = ref<ListProjection[]>([]);
-
-// Subscribe to the observable after store initialization
-let unsubscribeActiveLists: any = null;
 
 // Store references - will be initialized in onMounted
 let eventStore: any = null;
-let listsStore: any = null;
 
-// Initialize services and stores
+// Database refresh function
+const refreshLists = async () => {
+  activeListsArray.value = await db.listProjections.toArray();
+  console.log(`📋 Loaded ${activeListsArray.value.length} lists:`, activeListsArray.value.map(l => l.name));
+};
+
+// Setup database hooks for automatic updates
+const setupDatabaseHooks = () => {
+  console.log('Setting up database hooks...');
+  
+  // Set up hooks for all operations
+  db.listProjections.hook('creating', () => {
+    console.log('List created hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  db.listProjections.hook('updating', () => {
+    console.log('List updated hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  db.listProjections.hook('deleting', () => {
+    console.log('List deleted hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  // Set up hooks for item operations (to update list counts)
+  db.itemProjections.hook('creating', async () => {
+    console.log('Item created hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  db.itemProjections.hook('updating', async () => {
+    console.log('Item updated hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  db.itemProjections.hook('deleting', async () => {
+    console.log('Item deleted hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  console.log('Database hooks set up successfully');
+};
+
+// Initialize services and load data
 onMounted(async () => {
   // Initialize stores first
   eventStore = useEventStore();
-  listsStore = useListsStore();
+  
+  // Check and recreate database if needed
+  await db.checkAndRecreateIfNeeded();
   
   await listService.initialize();
   await eventStore.initialize();
-  await listsStore.initialize();
   
-  // Subscribe to active lists after initialization
-  if (listsStore.activeLists) {
-    unsubscribeActiveLists = listsStore.activeLists.subscribe((lists: ListProjection[]) => {
-      activeListsArray.value = lists;
-    });
-  }
+  // Load initial data and setup hooks
+  await refreshLists();
+  setupDatabaseHooks();
 });
 
-// Cleanup subscription on unmount
+// Cleanup on unmount
 onUnmounted(() => {
-  if (unsubscribeActiveLists) {
-    unsubscribeActiveLists.unsubscribe();
-  }
+  // No cleanup needed for the new approach
 });
 
 const selectedListId = ref<string | null>(null);
@@ -181,13 +221,26 @@ const selectedList = computed(() => {
   return activeListsArray.value.find(list => list.id === selectedListId.value) || null;
 });
 
-const taskCounts = computed(() => {
+const taskCounts = ref<Record<string, number>>({});
+
+// Function to update task counts
+const updateTaskCounts = async () => {
   const counts: Record<string, number> = {};
-  activeListsArray.value.forEach(list => {
-    counts[list.id] = 0;
-  });
-  return counts;
-});
+  
+  // Count items for each list
+  for (const list of activeListsArray.value) {
+    try {
+      const items = await itemService.getItemsForList(list.id);
+      counts[list.id] = items.length;
+    } catch (error) {
+      console.error(`Error getting items for list ${list.id}:`, error);
+      counts[list.id] = 0;
+    }
+  }
+  
+  taskCounts.value = counts;
+  console.log('📊 Updated task counts:', counts);
+};
 
 const showHome = () => {
   currentView.value = 'home';
@@ -263,8 +316,10 @@ const loadScannedItems = async () => {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]?.id) {
       const result = await messaging.send('get-scan-results', { tabId: tabs[0].id });
-      scannedItems.value = result.items;
-      showScannedItems.value = result.items.length > 0;
+      if (result && 'items' in result && result.items) {
+        scannedItems.value = result.items;
+        showScannedItems.value = result.items.length > 0;
+      }
     }
   } catch (error) {
     console.error('Failed to load scanned items:', error);
@@ -308,7 +363,7 @@ const addAllScannedItems = async () => {
       items: scannedItems.value
     });
     
-    if (result.added > 0) {
+    if (result && 'added' in result && result.added > 0) {
       scannedItems.value = [];
       showScannedItems.value = false;
     }
@@ -335,7 +390,7 @@ const dismissScannedItems = async () => {
 onMounted(async () => {
   try {
     const result = await messaging.send('get-active-list', undefined);
-    if (result.list) {
+    if (result && 'list' in result && result.list) {
       selectedListId.value = result.list.id;
       currentView.value = 'list';
     }
@@ -348,9 +403,6 @@ onMounted(async () => {
 });
 
 watch(activeListsArray, async () => {
-  if (activeListsArray.value.length === 0) {
-    await listService.createList('Inbox', 'inbox', '#4073ff');
-  }
   if (activeListsArray.value.length > 0 && !selectedListId.value && currentView.value === 'list') {
     selectedListId.value = activeListsArray.value[0].id;
   }

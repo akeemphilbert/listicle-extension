@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import type { ListProjection } from '@/stores/listsStore';
+import type { ListProjection } from '@/services/database';
 
 const props = defineProps<{
   lists: ListProjection[];

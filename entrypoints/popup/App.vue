@@ -80,65 +80,86 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
-import { storeToRefs } from 'pinia';
 import Header from '@/components/organisms/Header.vue';
 import HomeView from '@/components/organisms/HomeView.vue';
 import TaskList from '@/components/organisms/TaskList.vue';
-import { useListsStore, type ListProjection } from '@/stores/listsStore';
 import { useEventStore } from '@/stores/eventStore';
 import { listService } from '@/services/listService';
-import { db } from '@/services/database';
+import { itemService } from '@/services/itemService';
+import { jsonLdConverter } from '@/services/jsonLdConverter';
+import { db, type ListProjection } from '@/services/database';
 import { useTasks } from '@/composables/useTasks';
 import { messaging } from '@/utils/messaging';
 import { microformatExtractor } from '@/services/microformatExtractor';
 
-// Convert Dexie observables to reactive refs
+// Direct database access with hooks
 const activeListsArray = ref<ListProjection[]>([]);
-
-// Subscribe to the observable after store initialization
-let unsubscribeActiveLists: any = null;
 
 // Store references - will be initialized in onMounted
 let eventStore: any = null;
-let listsStore: any = null;
 
-// Initialize services and stores
+// Database refresh function
+const refreshLists = async () => {
+  activeListsArray.value = await db.listProjections.toArray();
+  console.log(`📋 Loaded ${activeListsArray.value.length} lists:`, activeListsArray.value.map(l => l.name));
+};
+
+// Setup database hooks for automatic updates
+const setupDatabaseHooks = () => {
+  console.log('Setting up database hooks...');
+  
+  // Set up hooks for all operations
+  db.listProjections.hook('creating', () => {
+    console.log('List created hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  db.listProjections.hook('updating', () => {
+    console.log('List updated hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  db.listProjections.hook('deleting', () => {
+    console.log('List deleted hook triggered');
+    nextTick(() => refreshLists());
+  });
+  
+  // Set up hooks for item operations (to update list counts)
+  db.itemProjections.hook('creating', async () => {
+    console.log('Item created hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  db.itemProjections.hook('updating', async () => {
+    console.log('Item updated hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  db.itemProjections.hook('deleting', async () => {
+    console.log('Item deleted hook triggered');
+    await nextTick();
+    await updateTaskCounts(); // Update task counts directly
+  });
+  
+  console.log('Database hooks set up successfully');
+};
+
+// Initialize services and load data
 onMounted(async () => {
   // Initialize stores first
   eventStore = useEventStore();
-  listsStore = useListsStore();
+  
+  // Check and recreate database if needed
+  await db.checkAndRecreateIfNeeded();
   
   await listService.initialize();
   await eventStore.initialize();
-  await listsStore.initialize();
   
-  // Debug: Check what's actually in the database
-  console.log('Checking database contents...');
-  const allProjections = await db.listProjections.toArray();
-  console.log('All projections in DB:', allProjections);
-  const activeProjections = allProjections.filter(list => !list.deleted);
-  console.log('Active projections in DB:', activeProjections);
-  
-  // Subscribe to active lists after initialization
-  console.log('Setting up lists store...');
-  console.log('Lists store methods:', Object.keys(listsStore));
-  
-  // Check if refreshLists exists
-  if (typeof listsStore.refreshLists === 'function') {
-    console.log('refreshLists function found, calling it...');
-    await listsStore.refreshLists();
-    activeListsArray.value = listsStore.activeLists;
-  } else {
-    console.log('refreshLists function not found, using manual approach...');
-    const manualLists = await listsStore.getActiveLists();
-    activeListsArray.value = manualLists;
-  }
-  
-  // Watch for changes to activeLists and update our local array
-  watch(() => listsStore.activeLists, (newLists) => {
-    console.log('Lists store updated:', newLists);
-    activeListsArray.value = newLists;
-  }, { deep: true });
+  // Load initial data and setup hooks
+  await refreshLists();
+  setupDatabaseHooks();
 });
 
 // Cleanup on unmount
@@ -162,13 +183,26 @@ const selectedList = computed(() => {
   return activeListsArray.value.find(list => list.id === selectedListId.value) || null;
 });
 
-const taskCounts = computed(() => {
+const taskCounts = ref<Record<string, number>>({});
+
+// Function to update task counts
+const updateTaskCounts = async () => {
   const counts: Record<string, number> = {};
-  activeListsArray.value.forEach(list => {
-    counts[list.id] = 0;
-  });
-  return counts;
-});
+  
+  // Count items for each list
+  for (const list of activeListsArray.value) {
+    try {
+      const items = await itemService.getItemsForList(list.id);
+      counts[list.id] = items.length;
+    } catch (error) {
+      console.error(`Error getting items for list ${list.id}:`, error);
+      counts[list.id] = 0;
+    }
+  }
+  
+  taskCounts.value = counts;
+  console.log('📊 Updated task counts:', counts);
+};
 
 const showHome = () => {
   currentView.value = 'home';
@@ -197,9 +231,8 @@ const handleDeleteList = async (listId: string) => {
     
     if (success) {
       console.log('List deleted successfully');
-      // Refresh the lists
-      await listsStore.refreshLists();
-      activeListsArray.value = listsStore.activeLists;
+      // Manual refresh as fallback in case hooks don't fire
+      await refreshLists();
       
       // If we deleted the currently selected list, go back to home
       if (selectedListId.value === listId) {
@@ -445,58 +478,96 @@ const triggerRecipeScan = async () => {
           // Use the custom extractor that works with the parsed DOM
           const extractedData = customExtractor.extractAll();
           
-          // Process the results for recipe detection
+          // Process the results and convert to JSON-LD items
           const microformats = extractedData.microformats;
+          const createdItems: any[] = [];
           
-          // Check for recipe-related microformats
-          const hasRecipeSchema = microformats.schemaOrg?.some((schema: any) => 
-            schema['@type'] === 'Recipe' || 
-            schema.type === 'Recipe' ||
-            (Array.isArray(schema['@type']) && schema['@type'].includes('Recipe'))
-          );
+          // Convert Schema.org JSON-LD data
+          if (microformats.schemaOrg && microformats.schemaOrg.length > 0) {
+            for (const schema of microformats.schemaOrg) {
+              const jsonLd = jsonLdConverter.fromSchemaOrg(schema);
+              const item = await itemService.createItem(jsonLd);
+              if (item) {
+                createdItems.push(item);
+                
+                // Link to selected list if available
+                if (selectedListId.value) {
+                  await itemService.linkItemToList(item.id, selectedListId.value);
+                }
+              }
+            }
+          }
           
-          const hasRecipeMicrodata = microformats.microdata?.some((item: any) => 
-            item.type === 'http://schema.org/Recipe' ||
-            item.type === 'https://schema.org/Recipe'
-          );
+          // Convert Microdata to JSON-LD
+          if (microformats.microdata && microformats.microdata.length > 0) {
+            for (const microdata of microformats.microdata) {
+              const jsonLd = jsonLdConverter.fromMicrodata(microdata);
+              const item = await itemService.createItem(jsonLd);
+              if (item) {
+                createdItems.push(item);
+                
+                // Link to selected list if available
+                if (selectedListId.value) {
+                  await itemService.linkItemToList(item.id, selectedListId.value);
+                }
+              }
+            }
+          }
           
-          // Check if any microformats are present
-          const hasSchemaOrg = microformats.schemaOrg && microformats.schemaOrg.length > 0;
-          const hasMicrodata = microformats.microdata && microformats.microdata.length > 0;
-          const hasOpenGraph = Object.keys(microformats.openGraph || {}).length > 0;
-          const hasTwitter = Object.keys(microformats.twitter || {}).length > 0;
-          const hasSemantic = ((microformats.semantic?.headings?.length || 0) > 0 || 
-                              (microformats.semantic?.lists?.length || 0) > 0 || 
-                              (microformats.semantic?.tables?.length || 0) > 0);
+          // Convert Open Graph data to JSON-LD
+          if (Object.keys(microformats.openGraph || {}).length > 0) {
+            const jsonLd = jsonLdConverter.fromOpenGraph(microformats.openGraph, url);
+            const item = await itemService.createItem(jsonLd);
+            if (item) {
+              createdItems.push(item);
+              
+              // Link to selected list if available
+              if (selectedListId.value) {
+                await itemService.linkItemToList(item.id, selectedListId.value);
+              }
+            }
+          }
           
-          const hasAnyMicroformats = hasSchemaOrg || hasMicrodata || hasOpenGraph || hasTwitter || hasSemantic;
+          // Convert Twitter Card data to JSON-LD
+          if (Object.keys(microformats.twitter || {}).length > 0) {
+            const jsonLd = jsonLdConverter.fromTwitterCard(microformats.twitter, url);
+            const item = await itemService.createItem(jsonLd);
+            if (item) {
+              createdItems.push(item);
+              
+              // Link to selected list if available
+              if (selectedListId.value) {
+                await itemService.linkItemToList(item.id, selectedListId.value);
+              }
+            }
+          }
           
-          if (hasRecipeSchema || hasRecipeMicrodata) {
-            // Found recipe-specific microformats
-            const recipeSchemas = microformats.schemaOrg?.filter((schema: any) => 
-              schema['@type'] === 'Recipe' || 
-              schema.type === 'Recipe' ||
-              (Array.isArray(schema['@type']) && schema['@type'].includes('Recipe'))
-            ) || [];
+          // Convert semantic HTML to JSON-LD
+          if (microformats.semantic && (
+            (microformats.semantic.headings?.length || 0) > 0 || 
+            (microformats.semantic.lists?.length || 0) > 0 || 
+            (microformats.semantic.tables?.length || 0) > 0
+          )) {
+            const jsonLd = jsonLdConverter.fromSemanticHtml(microformats.semantic, url);
+            const item = await itemService.createItem(jsonLd);
+            if (item) {
+              createdItems.push(item);
+              
+              // Link to selected list if available
+              if (selectedListId.value) {
+                await itemService.linkItemToList(item.id, selectedListId.value);
+              }
+            }
+          }
+          
+          // Show results
+          if (createdItems.length > 0) {
+            const itemTypes = [...new Set(createdItems.map(item => item.type))];
+            alert(`✅ Successfully created ${createdItems.length} item(s)!\n\nTypes: ${itemTypes.join(', ')}\n\nItems:\n${createdItems.map(item => `• ${item.name} (${item.type})`).join('\n')}\n\n${selectedListId.value ? 'Items have been added to the selected list.' : 'No list selected - items created but not linked to any list.'}`);
             
-            const recipeMicrodata = microformats.microdata?.filter((item: any) => 
-              item.type === 'http://schema.org/Recipe' ||
-              item.type === 'https://schema.org/Recipe'
-            ) || [];
-            
-            const totalRecipes = recipeSchemas.length + recipeMicrodata.length;
-            
-            alert(`🍳 Found ${totalRecipes} recipe(s)!\n\nRecipe microformats detected:\n${recipeSchemas.map((r: any) => `• ${r.name || r.headline || 'Untitled Recipe'}`).join('\n')}\n${recipeMicrodata.map((r: any) => `• ${r.properties.name || 'Untitled Recipe'}`).join('\n')}\n\nPage: ${title}`);
-          } else if (hasAnyMicroformats) {
-            // Found other microformats but no recipes
-            const foundTypes = [];
-            if (hasSchemaOrg) foundTypes.push(`Schema.org (${microformats.schemaOrg?.length || 0})`);
-            if (hasMicrodata) foundTypes.push(`Microdata (${microformats.microdata?.length || 0})`);
-            if (hasOpenGraph) foundTypes.push(`Open Graph (${Object.keys(microformats.openGraph || {}).length})`);
-            if (hasTwitter) foundTypes.push(`Twitter Cards (${Object.keys(microformats.twitter || {}).length})`);
-            if (hasSemantic) foundTypes.push(`Semantic HTML`);
-            
-            alert(`📄 Microformats detected but no recipes found.\n\nFound: ${foundTypes.join(', ')}\n\nTry visiting a recipe website like allrecipes.com or foodnetwork.com`);
+            // Manual refresh as fallback in case hooks don't fire
+            await refreshLists();
+            await updateTaskCounts();
           } else {
             alert('❌ No microformats found on this page.\n\nTry visiting a site with structured data like:\n• Recipe sites (allrecipes.com, foodnetwork.com)\n• News sites (bbc.com, cnn.com)\n• E-commerce sites (amazon.com, ebay.com)');
           }
@@ -568,9 +639,6 @@ watch(showAddListModal, async (show) => {
 });
 
 watch(activeListsArray, async () => {
-  if (activeListsArray.value.length === 0) {
-    await listService.createList('Inbox', 'inbox', '#4073ff');
-  }
   if (activeListsArray.value.length > 0 && !selectedListId.value && currentView.value === 'list') {
     selectedListId.value = activeListsArray.value[0].id;
   }

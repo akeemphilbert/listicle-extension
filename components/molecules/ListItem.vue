@@ -18,7 +18,7 @@
 
 <script setup lang="ts">
 import BaseIcon from '../atoms/BaseIcon.vue';
-import type { ListProjection } from '../../stores/listsStore';
+import type { ListProjection } from '@/services/database';
 
 defineProps<{
   list: ListProjection;
