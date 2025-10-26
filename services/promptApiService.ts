@@ -247,22 +247,6 @@ class PromptApiService {
       
       // Get all lists from the list projection
       const lists = await db.listProjections.toArray();
-
-       return [{
-        id: 'list_1761432531015_w4nj5m023',
-        description: 'Receipes for bread',
-        name: 'Bread Receipes',
-       },{
-        id: 'list_1761432531015_w4nj5m024',
-        name: 'Juice Receipes ',
-        description: 'Receipes for juice',
-       }, 
-       {
-        id: 'list_1761432531015_w4nj5m025',
-        name: 'Banana Receipes',
-        description: 'Receipes for banana',
-       }
-      ];
       
       // Return only id, name, and description
       return lists.map(list => ({
@@ -374,11 +358,6 @@ ${pageDetails}
     const systemContent = `You are an expert organizer. Before analyzing any input data, you must:
 1. Review the user's current personalized lists
 2. Review the extracted microformat data from the current page
-
-User Lists:
-${userLists}
-
-
 
  Determine which list, if any, the data should be added to. Respond only with the final JSON structure requested by the user.
  The item can be added to multiple lists.

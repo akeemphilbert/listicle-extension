@@ -1,58 +1,41 @@
 import { userPreferences } from '../services/userPreferences';
-import { messaging } from '../utils/messaging';
+import { db } from '../services/database';
 
-export default defineBackground(() => {
+export default defineBackground(async () => {
   console.log('Background script loaded');
   
-  // Handle active list management
-  messaging.on('get-active-list', async () => {
-    const activeListId = await userPreferences.getActiveListId();
-    // TODO: Get actual list object from storage
-    return { list: activeListId ? { 
-      id: activeListId, 
-      name: 'Current List',
-      icon: 'list',
-      color: '#808080',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    } : null };
-  });
+  // Initialize database first
+  await db.checkAndRecreateIfNeeded();
+  console.log('Background database initialized');
   
-  messaging.on('set-active-list', async (payload) => {
-    await userPreferences.setActiveListId(payload.listId);
-    return { success: true };
-  });
+  console.log('Registering background message listener');
   
-  // Handle preferences
-  messaging.on('update-preferences', async (payload) => {
-    try {
-      await userPreferences.updatePreferences(payload.preferences);
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to update preferences:', error);
-      return { success: false };
+  browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: any) => {
+    console.log('Background received message:', message.type, 'payload:', message);
+    
+    if (message.type === 'get-all-lists') {
+      console.log('Processing get-all-lists request');
+      
+      (async () => {
+        try {
+          const lists = await db.listProjections.toArray();
+          console.log('Fetched lists from database:', lists);
+          const responseData = { data: { lists }, messageId: message.messageId };
+          console.log('About to send response:', responseData);
+          sendResponse(responseData);
+          console.log('sendResponse called');
+        } catch (error) {
+          console.error('Error fetching lists:', error);
+          sendResponse({ 
+            error: error instanceof Error ? error.message : String(error), 
+            messageId: message.messageId 
+          });
+        }
+      })();
+      
+      return true; // Keep the channel open for async response
     }
   });
   
-  messaging.on('get-preferences', async () => {
-    const preferences = await userPreferences.getPreferences();
-    return { preferences };
-  });
-  
-  // Handle scan results
-  messaging.on('get-scan-results', async (payload) => {
-    const items = await userPreferences.getScanResults(payload.tabId);
-    return { items };
-  });
-  
-  messaging.on('clear-scan-results', async (payload) => {
-    await userPreferences.clearScanResults(payload.tabId);
-    return { success: true };
-  });
-  
-  // Handle model status
-  messaging.on('model-status', async () => {
-    const status = await userPreferences.getModelDownloadStatus();
-    return { status };
-  });
+  console.log('Background message listener registered');
 });
