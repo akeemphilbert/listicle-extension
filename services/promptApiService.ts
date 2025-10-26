@@ -5,6 +5,7 @@
 
 import { microformatExtractor, ExtractedContent } from './microformatExtractor';
 import { userPreferences, ScannedItem } from './userPreferences';
+import { z } from 'zod';
 
 interface PromptSession {
   session: any; // LanguageModelSession
@@ -19,13 +20,42 @@ interface PromptApiResponse {
 }
 
 class PromptApiService {
-  private sessions: Map<string, PromptSession> = new Map();
-  private modelAvailability: 'readily' | 'after-download' | 'no' | 'unknown' = 'unknown';
+  private session: any | null = null; // LanguageModelSession
+  private modelAvailability: 'readily' | 'after-download' | 'downloading' | 'no' | 'unknown' = 'unknown';
+  private extractedContent: ExtractedContent | null = null;
+
+  /**
+   * Tool definition for getting user lists
+   */
+  private userListsTool = {
+    name: "getUserLists",
+    description: "Retrieves the current user's personalized lists for organizing items.",
+    execute: async () => {
+      // This is where your existing code to fetch user lists runs.
+      // Return the lists, perhaps as a JSON string, for the model to process.
+      return JSON.stringify(await this.getUserLists()); 
+    },
+  };
+
+  /**
+   * Tool definition for getting page details
+   */
+  private pageDetailsTool = {
+    name: "getPageDetails",
+    description: "Retrieves the extracted microformat data and content from the current webpage.",
+    execute: async () => {
+      if (!this.extractedContent) {
+        return JSON.stringify({ error: "No page content available" });
+      }
+      return JSON.stringify(this.extractedContent.microformats);
+    },
+  };
 
   /**
    * Initialize the service and check model availability
    */
   async initialize(): Promise<void> {
+    console.log('🚀 PromptApiService initialize() called');
     try {
       // Check if we're in a context where the Prompt API is available
       if (typeof window === 'undefined') {
@@ -35,24 +65,34 @@ class PromptApiService {
       }
 
       // Check if the Prompt API is available
-      if (!('ai' in window) || !('languageModel' in (window as any).ai)) {
-        console.warn('Prompt API not available');
+      console.log('Checking Prompt API availability...');
+      console.log('LanguageModel exists:', typeof LanguageModel !== 'undefined');
+      
+      if (typeof LanguageModel === 'undefined') {
+        console.warn('Prompt API not available - LanguageModel not found');
         await userPreferences.setModelDownloadStatus('unavailable');
         return;
       }
 
-      const availability = await (window as any).ai.languageModel.availability();
+      const availability = await LanguageModel.availability();
       this.modelAvailability = availability;
       
       switch (availability) {
         case 'readily':
           await userPreferences.setModelDownloadStatus('ready');
+          console.log('✅ Prompt API ready - Model available for scanning');
           break;
         case 'after-download':
           await userPreferences.setModelDownloadStatus('downloading');
+          console.log('📥 Prompt API needs download - Model not yet available');
+          break;
+        case 'downloading':
+          await userPreferences.setModelDownloadStatus('downloading');
+          console.log('⏳ Prompt API downloading - Model in progress');
           break;
         case 'no':
           await userPreferences.setModelDownloadStatus('unavailable');
+          console.log('❌ Prompt API unavailable - Model not supported');
           break;
       }
     } catch (error) {
@@ -77,6 +117,31 @@ class PromptApiService {
   }
 
   /**
+   * Check model availability and return detailed status
+   */
+  async checkAvailability(): Promise<{
+    status: 'readily' | 'after-download' | 'downloading' | 'no';
+    needsDownload: boolean;
+    isDownloading: boolean;
+  }> {
+    if (typeof LanguageModel === 'undefined') {
+      console.log('❌ Prompt API not available in this context');
+      return { status: 'no', needsDownload: false, isDownloading: false };
+    }
+
+    const availability = await LanguageModel.availability();
+    this.modelAvailability = availability;
+    
+    console.log(`🔍 Prompt API availability check: ${availability}`);
+    
+    return {
+      status: availability,
+      needsDownload: availability === 'after-download',
+      isDownloading: availability === 'downloading'
+    };
+  }
+
+  /**
    * Scan a page for items relevant to the active list
    */
   async scanPage(
@@ -94,212 +159,16 @@ class PromptApiService {
       // Extract content from the page
       const extractedContent = microformatExtractor.extractAll();
       
-      // Create or get session
-      const session = await this.getOrCreateSession(listName, listDescription);
       
-      // Generate prompt based on list context
-      const prompt = this.generatePrompt(extractedContent, listName, listDescription);
-      
-      // Call the Prompt API
-      const response = await this.callPromptApi(session, prompt);
-      
-      // Parse and filter results
-      const items = this.parseResponse(response, extractedContent.url);
-      
-      // Filter by confidence threshold
-      const confidenceThreshold = await userPreferences.getScanConfidence();
-      const filteredItems = items.filter(item => item.confidence >= confidenceThreshold);
-      
-      // Store results if tabId provided
-      if (tabId && filteredItems.length > 0) {
-        await userPreferences.setScanResults(tabId, filteredItems);
-      }
-      
-      return filteredItems;
+  
+      return [];
     } catch (error) {
       console.error('Page scan failed:', error);
       return [];
     }
   }
 
-  /**
-   * Get or create a session for the given list context
-   */
-  private async getOrCreateSession(
-    listName: string,
-    listDescription?: string
-  ): Promise<any> {
-    const sessionKey = `${listName}-${listDescription || ''}`;
-    
-    // Check if we have an existing session
-    const existing = this.sessions.get(sessionKey);
-    if (existing && this.isSessionValid(existing)) {
-      existing.lastUsed = new Date();
-      return existing.session;
-    }
-    
-    // Create new session
-    try {
-      const session = await (window as any).ai.languageModel.create();
-      
-      // Set up context for this list type
-      const contextPrompt = this.generateContextPrompt(listName, listDescription);
-      await session.append([{
-        role: 'user',
-        parts: [{ type: 'text', value: contextPrompt }],
-      }]);
-      
-      const newSession: PromptSession = {
-        session,
-        createdAt: new Date(),
-        lastUsed: new Date(),
-      };
-      
-      this.sessions.set(sessionKey, newSession);
-      return session;
-    } catch (error) {
-      console.error('Failed to create session:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Check if a session is still valid (not too old)
-   */
-  private isSessionValid(session: PromptSession): boolean {
-    const maxAge = 30 * 60 * 1000; // 30 minutes
-    return Date.now() - session.createdAt.getTime() < maxAge;
-  }
-
-  /**
-   * Generate context prompt for the session
-   */
-  private generateContextPrompt(listName: string, listDescription?: string): string {
-    return `You are an AI assistant that helps users find relevant items for their lists. 
-The current list is: "${listName}"
-${listDescription ? `Description: "${listDescription}"` : ''}
-
-Your task is to analyze webpage content and extract items that would be relevant to this list. 
-Return only items that match the list's purpose and context.
-
-Return your analysis as a JSON array of objects with this structure:
-[
-  {
-    "title": "Item title",
-    "description": "Brief description",
-    "url": "Relevant URL if applicable",
-    "confidence": 0.0-1.0,
-    "type": "product|article|recipe|todo|other"
-  }
-]
-
-Only include items with confidence >= 0.5. Be selective and relevant.`;
-  }
-
-  /**
-   * Generate the main prompt for page analysis
-   */
-  private generatePrompt(
-    content: ExtractedContent,
-    listName: string,
-    listDescription?: string
-  ): string {
-    const microformatInfo = this.formatMicroformatInfo(content.microformats);
-    
-    return `Analyze this webpage for items relevant to the list "${listName}".
-${listDescription ? `List description: "${listDescription}"` : ''}
-
-Page URL: ${content.url}
-Page Title: ${content.title}
-Page Description: ${content.description}
-
-Microformat Data:
-${microformatInfo}
-
-Main Content (first 3000 chars):
-${content.content.substring(0, 3000)}
-
-Find items that match this list's purpose. Focus on the most relevant and actionable items.`;
-  }
-
-  /**
-   * Format microformat data for the prompt
-   */
-  private formatMicroformatInfo(microformats: any): string {
-    let info = '';
-    
-    if (microformats.schemaOrg?.length) {
-      info += `Schema.org data: ${JSON.stringify(microformats.schemaOrg.slice(0, 3))}\n`;
-    }
-    
-    if (microformats.openGraph && Object.keys(microformats.openGraph).length) {
-      info += `Open Graph: ${JSON.stringify(microformats.openGraph)}\n`;
-    }
-    
-    if (microformats.semantic?.headings?.length) {
-      info += `Headings: ${microformats.semantic.headings.slice(0, 5).join(', ')}\n`;
-    }
-    
-    if (microformats.semantic?.lists?.length) {
-      info += `List items: ${microformats.semantic.lists.slice(0, 10).join(', ')}\n`;
-    }
-    
-    return info || 'No structured data found';
-  }
-
-  /**
-   * Call the Prompt API with the given session and prompt
-   */
-  private async callPromptApi(session: any, prompt: string): Promise<string> {
-    try {
-      // Use streaming for better performance
-      const stream = session.promptStreaming(prompt);
-      let response = '';
-      
-      for await (const chunk of stream) {
-        response += chunk;
-      }
-      
-      return response;
-    } catch (error) {
-      console.error('Prompt API call failed:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Parse the API response into structured items
-   */
-  private parseResponse(response: string, pageUrl: string): ScannedItem[] {
-    try {
-      // Try to extract JSON from the response
-      const jsonMatch = response.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        console.warn('No JSON array found in response');
-        return [];
-      }
-      
-      const items = JSON.parse(jsonMatch[0]);
-      
-      if (!Array.isArray(items)) {
-        console.warn('Response is not an array');
-        return [];
-      }
-      
-      return items.map((item: any) => ({
-        title: item.title || 'Untitled',
-        description: item.description || '',
-        url: item.url || pageUrl,
-        confidence: Math.max(0, Math.min(1, item.confidence || 0.5)),
-        type: this.normalizeType(item.type),
-        extractedAt: new Date().toISOString(),
-      }));
-    } catch (error) {
-      console.error('Failed to parse API response:', error);
-      return [];
-    }
-  }
-
+  
   /**
    * Normalize item type
    */
@@ -314,20 +183,15 @@ Find items that match this list's purpose. Focus on the most relevant and action
   }
 
   /**
-   * Clean up old sessions
+   * Clean up old session
    */
-  private cleanupSessions(): void {
-    const now = Date.now();
-    const maxAge = 60 * 60 * 1000; // 1 hour
-    
-    for (const [key, session] of this.sessions.entries()) {
-      if (now - session.lastUsed.getTime() > maxAge) {
-        try {
-          session.session.destroy();
-        } catch (error) {
-          console.warn('Failed to destroy session:', error);
-        }
-        this.sessions.delete(key);
+  private cleanupSession(): void {
+    if (this.session) {
+      try {
+        this.session.destroy();
+        this.session = null;
+      } catch (error) {
+        console.warn('Failed to destroy session:', error);
       }
     }
   }
@@ -369,12 +233,293 @@ Find items that match this list's purpose. Focus on the most relevant and action
   }
 
   /**
+   * Get all user lists for the Prompt API
+   * This provides the AI with context about available lists
+   */
+  async getUserLists(): Promise<Array<{
+    id: string;
+    name: string;
+    description: string;
+  }>> {
+    try {
+      // Import database dynamically to avoid circular dependencies
+      const { db } = await import('./database');
+      
+      // Get all lists from the list projection
+      const lists = await db.listProjections.toArray();
+
+       return [{
+        id: 'list_1761432531015_w4nj5m023',
+        description: 'Receipes for bread',
+        name: 'Bread Receipes',
+       },{
+        id: 'list_1761432531015_w4nj5m024',
+        name: 'Juice Receipes ',
+        description: 'Receipes for juice',
+       }, 
+       {
+        id: 'list_1761432531015_w4nj5m025',
+        name: 'Banana Receipes',
+        description: 'Receipes for banana',
+       }
+      ];
+      
+      // Return only id, name, and description
+      return lists.map(list => ({
+        id: list.id,
+        name: list.name,
+        description: list.description || '',
+      }));
+    } catch (error) {
+      console.error('Failed to get user lists:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get the user lists tool definition
+   */
+  getUserListsTool() {
+    return this.userListsTool;
+  }
+
+  /**
+   * Execute the user lists tool
+   */
+  async executeUserListsTool(): Promise<string> {
+    return await this.userListsTool.execute();
+  }
+
+  /**
+   * Get the page details tool definition
+   */
+  getPageDetailsTool() {
+    return this.pageDetailsTool;
+  }
+
+  /**
+   * Set extracted content for AI tool access
+   */
+  setExtractedContent(content: ExtractedContent): void {
+    this.extractedContent = content;
+    console.log('📄 Page content stored for AI tool access');
+  }
+
+  /**
+   * Create session with download monitoring for models that need download
+   */
+  async createSessionWithDownload(
+    onProgress?: (progress: number) => void
+  ): Promise<any> {
+    const availability = await this.checkAvailability();
+    
+    if (availability.status === 'after-download') {
+      const userLists = await this.userListsTool.execute();
+      const pageDetails = await this.pageDetailsTool.execute();
+      const systemContent = `You are an expert organizer. Before analyzing any input data, you must:
+1. Review the user's current personalized lists
+2. Review the extracted microformat data from the current page
+
+User Lists:
+${userLists}
+
+Page Details:
+${pageDetails}
+
+ Determine which list, if any, the data should be added to. Respond only with the final JSON structure requested by the user.`;
+      
+      // Model needs download
+      const session = await LanguageModel.create({
+        monitor(m: any) {
+          m.addEventListener('downloadprogress', (e: any) => {
+            const progress = e.loaded * 100;
+            console.log(`Downloaded ${progress}%`);
+            if (onProgress) {
+              onProgress(progress);
+            }
+          });
+        },
+        initialPrompts: [
+          {
+            role: "system",
+            content: systemContent
+          }
+        ],
+        tools: [this.userListsTool, this.pageDetailsTool]
+      });
+      this.session = session;
+      console.log(`✅ Prompt API session created successfully with prompt ${systemContent}`);
+      return session;
+    } else if (availability.status === 'downloading') {
+      // Model is currently downloading, listen for progress
+      console.log('Model is downloading...');
+      // Wait and retry or listen for completion
+      throw new Error('Model is currently downloading, please wait');
+    } else if (availability.status === 'readily') {
+      // Model is ready, create session with parameters
+      return await this.createSession();
+    }
+    
+    throw new Error(`Cannot create session: ${availability.status}`);
+  }
+
+  /**
+   * Create standard session with temperature/topK parameters
+   */
+  async createSession(): Promise<any> {
+    const params = await LanguageModel.params();
+    const userLists = await this.userListsTool.execute();
+    
+    // Build system prompt WITHOUT microformat data
+    const systemContent = `You are an expert organizer. Before analyzing any input data, you must:
+1. Review the user's current personalized lists
+2. Review the extracted microformat data from the current page
+
+User Lists:
+${userLists}
+
+
+
+ Determine which list, if any, the data should be added to. Respond only with the final JSON structure requested by the user.
+ The item can be added to multiple lists.
+ If there is no item id use the page url as the id
+ Provide a detailed reasoning process for your decision.`;
+      // Initializing a new session must either specify both `topK` and
+    // `temperature` or neither of them.
+    const session = await LanguageModel.create({
+      temperature: Math.max(params.defaultTemperature * 1.2, 2.0),
+      topK: params.defaultTopK,
+      expectedInputs:[
+        {
+          type:"text",
+          languages:["en"],
+        }
+      ],
+      expectedOutputs:[
+        {
+          type:"text",
+          languages:["en"],
+        }
+      ],
+      initialPrompts: [
+        {
+          role: "system",
+          content: systemContent
+        }
+      ]
+    });
+    
+    this.session = session;
+    console.log(`✅ Prompt API session created successfully with prompt ${systemContent}`);
+    return session;
+  }
+
+  /**
+   * Send a message as a prompt to the current session
+   */
+  async sendPrompt(message: string): Promise<string> {
+    if (!this.session) {
+      throw new Error('No active session. Create a session first.');
+    }
+
+    try {
+      console.log('📤 Sending prompt:', message);
+      const schema = {
+        "type":"array",
+        "items": {
+          "type":"object",
+          "properties": {
+            "recipe": {
+              "type":"object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                },
+                "description": {
+                  "type": "string",
+                },
+                "ingredients": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                  },
+                },
+                "instructions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                  },
+                },
+                "image": {
+                  "type": "string",
+                },
+                "url": {
+                  "type": "string",
+                },
+                "prepTime": {
+                  "type": "string",
+                },
+                "cookTime": {
+                  "type": "string",
+                },
+                "totalTime": {
+                  "type": "string",
+                },
+                "yield": {
+                  "type": "string",
+                },
+                "author": {
+                  "type": "string",
+                },
+              },
+            },
+            "listId": {
+              "type": "string",
+            },
+            "reasoning": {
+              "type": "string",
+            },
+          },
+        },
+      }
+      
+      // Send the prompt to the session using the correct format
+      const response = await this.session.prompt(message, {
+        responseConstraint: schema,
+      });
+      
+      console.log('📥 Received response:', response);
+      return response;
+    } catch (error) {
+      console.error('❌ Failed to send prompt:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get download status for UI integration
+   */
+  getDownloadStatus(): {
+    isAvailable: boolean;
+    needsDownload: boolean;
+    isDownloading: boolean;
+    canEnable: boolean;
+  } {
+    return {
+      isAvailable: this.modelAvailability === 'readily',
+      needsDownload: this.modelAvailability === 'after-download',
+      isDownloading: this.modelAvailability === 'downloading',
+      canEnable: this.modelAvailability === 'after-download' || this.modelAvailability === 'readily'
+    };
+  }
+
+  /**
    * Initialize periodic cleanup
    */
   startCleanupTimer(): void {
-    // Clean up sessions every 30 minutes
+    // Clean up session every 30 minutes
     setInterval(() => {
-      this.cleanupSessions();
+      this.cleanupSession();
     }, 30 * 60 * 1000);
   }
 }

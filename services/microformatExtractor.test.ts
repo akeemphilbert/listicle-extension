@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { microformatExtractor, MicroformatData, ExtractedContent } from './microformatExtractor';
+import { microformatExtractor, MicroformatData, ExtractedContent, HRecipe } from './microformatExtractor';
 
 // Mock DOM environment
 const mockDocument = {
@@ -34,6 +34,7 @@ const createMockElement = (tagName: string, attributes: Record<string, string> =
     hasAttribute: vi.fn((name: string) => name in attributes),
     cloneNode: vi.fn(() => mockClone),
     querySelectorAll: vi.fn(() => []),
+    querySelector: vi.fn(() => null),
     remove: vi.fn(),
   };
 };
@@ -116,6 +117,9 @@ describe('MicroformatExtractor', () => {
         if (selector === 'main, article, [role="main"], .content, #content, .main-content, .post-content, .entry-content') {
           return [createMockElement('main', {}, 'Main content area')];
         }
+        if (selector === '.h-recipe, [class*="h-recipe"]') {
+          return [];
+        }
         return [];
       });
       
@@ -158,6 +162,7 @@ describe('MicroformatExtractor', () => {
             'twitter:card': 'summary',
             'twitter:title': 'Twitter Title'
           },
+          hRecipe: [],
           semantic: {
             headings: ['Main Heading', 'Sub Heading'],
             lists: ['List item 1', 'List item 2'],
@@ -362,6 +367,321 @@ describe('MicroformatExtractor', () => {
         'twitter:description': 'Twitter Description',
         'twitter:image': 'twitter-image.jpg'
       });
+    });
+  });
+
+  describe('h-recipe extraction', () => {
+    it('should extract basic h-recipe data', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockName = createMockElement('h1', { class: 'p-name' }, 'Chocolate Chip Cookies');
+      const mockIngredient1 = createMockElement('li', { class: 'p-ingredient' }, '2 cups flour');
+      const mockIngredient2 = createMockElement('li', { class: 'p-ingredient' }, '1 cup sugar');
+      const mockInstruction = createMockElement('li', { class: 'e-instructions' }, 'Mix ingredients together');
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName];
+        if (selector === '.p-ingredient, [class*="p-ingredient"]') return [mockIngredient1, mockIngredient2];
+        if (selector === '.e-instructions, [class*="e-instructions"]') return [mockInstruction];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(1);
+      expect(result.microformats.hRecipe![0]).toEqual({
+        name: 'Chocolate Chip Cookies',
+        ingredients: ['2 cups flour', '1 cup sugar'],
+        instructions: ['Mix ingredients together']
+      });
+    });
+
+    it('should extract complete h-recipe with all properties', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      // Create all the mock elements
+      const mockName = createMockElement('h1', { class: 'p-name' }, 'Perfect Pancakes');
+      const mockIngredient = createMockElement('li', { class: 'p-ingredient' }, '1 cup flour');
+      const mockInstruction = createMockElement('li', { class: 'e-instructions' }, 'Heat pan to medium');
+      const mockPrepTime = createMockElement('span', { class: 'p-prep-time' }, '10 minutes');
+      const mockCookTime = createMockElement('span', { class: 'p-cook-time' }, '15 minutes');
+      const mockTotalTime = createMockElement('span', { class: 'p-total-time' }, '25 minutes');
+      const mockYield = createMockElement('span', { class: 'p-yield' }, '4 servings');
+      const mockAuthor = createMockElement('span', { class: 'p-author' }, 'Chef John');
+      const mockPublished = createMockElement('time', { class: 'dt-published', datetime: '2023-01-01' }, 'January 1, 2023');
+      const mockImage = createMockElement('img', { class: 'u-photo', src: 'pancakes.jpg' }, '');
+      const mockUrl = createMockElement('a', { class: 'u-url', href: 'https://example.com/pancakes' }, '');
+      const mockDescription = createMockElement('p', { class: 'p-summary' }, 'Fluffy pancakes recipe');
+      const mockCuisine = createMockElement('span', { class: 'p-cuisine' }, 'American');
+      const mockCategory = createMockElement('span', { class: 'p-category' }, 'Breakfast');
+      const mockDifficulty = createMockElement('span', { class: 'p-difficulty' }, 'Easy');
+      const mockRating = createMockElement('span', { class: 'p-rating' }, '4.5 stars');
+      
+      // Mock nutrition element
+      const mockNutrition = createMockElement('div', { class: 'h-nutrition' });
+      const mockCalories = createMockElement('span', { class: 'p-calories' }, '250 calories');
+      const mockFat = createMockElement('span', { class: 'p-fat' }, '8g fat');
+      const mockProtein = createMockElement('span', { class: 'p-protein' }, '6g protein');
+      const mockCarbs = createMockElement('span', { class: 'p-carbs' }, '35g carbs');
+      
+      mockNutrition.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-calories, [class*="p-calories"]') return [mockCalories];
+        if (selector === '.p-fat, [class*="p-fat"]') return [mockFat];
+        if (selector === '.p-protein, [class*="p-protein"]') return [mockProtein];
+        if (selector === '.p-carbs, [class*="p-carbs"]') return [mockCarbs];
+        return [];
+      });
+      
+      mockNutrition.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-calories, [class*="p-calories"]') return mockCalories;
+        if (selector === '.p-fat, [class*="p-fat"]') return mockFat;
+        if (selector === '.p-protein, [class*="p-protein"]') return mockProtein;
+        if (selector === '.p-carbs, [class*="p-carbs"]') return mockCarbs;
+        return null;
+      });
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName];
+        if (selector === '.p-ingredient, [class*="p-ingredient"]') return [mockIngredient];
+        if (selector === '.e-instructions, [class*="e-instructions"]') return [mockInstruction];
+        if (selector === '.p-prep-time, [class*="p-prep-time"]') return [mockPrepTime];
+        if (selector === '.p-cook-time, [class*="p-cook-time"]') return [mockCookTime];
+        if (selector === '.p-total-time, [class*="p-total-time"]') return [mockTotalTime];
+        if (selector === '.p-yield, [class*="p-yield"]') return [mockYield];
+        if (selector === '.h-nutrition, [class*="h-nutrition"]') return [mockNutrition];
+        if (selector === '.p-author, [class*="p-author"]') return [mockAuthor];
+        if (selector === '.dt-published, [class*="dt-published"]') return [mockPublished];
+        if (selector === '.u-photo, [class*="u-photo"]') return [mockImage];
+        if (selector === '.u-url, [class*="u-url"]') return [mockUrl];
+        if (selector === '.p-summary, [class*="p-summary"]') return [mockDescription];
+        if (selector === '.p-cuisine, [class*="p-cuisine"]') return [mockCuisine];
+        if (selector === '.p-category, [class*="p-category"]') return [mockCategory];
+        if (selector === '.p-difficulty, [class*="p-difficulty"]') return [mockDifficulty];
+        if (selector === '.p-rating, [class*="p-rating"]') return [mockRating];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName;
+        if (selector === '.p-prep-time, [class*="p-prep-time"]') return mockPrepTime;
+        if (selector === '.p-cook-time, [class*="p-cook-time"]') return mockCookTime;
+        if (selector === '.p-total-time, [class*="p-total-time"]') return mockTotalTime;
+        if (selector === '.p-yield, [class*="p-yield"]') return mockYield;
+        if (selector === '.h-nutrition, [class*="h-nutrition"]') return mockNutrition;
+        if (selector === '.p-author, [class*="p-author"]') return mockAuthor;
+        if (selector === '.dt-published, [class*="dt-published"]') return mockPublished;
+        if (selector === '.u-photo, [class*="u-photo"]') return mockImage;
+        if (selector === '.u-url, [class*="u-url"]') return mockUrl;
+        if (selector === '.p-summary, [class*="p-summary"]') return mockDescription;
+        if (selector === '.p-cuisine, [class*="p-cuisine"]') return mockCuisine;
+        if (selector === '.p-category, [class*="p-category"]') return mockCategory;
+        if (selector === '.p-difficulty, [class*="p-difficulty"]') return mockDifficulty;
+        if (selector === '.p-rating, [class*="p-rating"]') return mockRating;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(1);
+      expect(result.microformats.hRecipe![0]).toEqual({
+        name: 'Perfect Pancakes',
+        ingredients: ['1 cup flour'],
+        instructions: ['Heat pan to medium'],
+        prepTime: '10 minutes',
+        cookTime: '15 minutes',
+        totalTime: '25 minutes',
+        yield: '4 servings',
+        nutrition: {
+          calories: '250 calories',
+          fat: '8g fat',
+          protein: '6g protein',
+          carbs: '35g carbs'
+        },
+        author: 'Chef John',
+        published: '2023-01-01',
+        image: 'pancakes.jpg',
+        url: 'https://example.com/pancakes',
+        description: 'Fluffy pancakes recipe',
+        cuisine: 'American',
+        category: 'Breakfast',
+        difficulty: 'Easy',
+        rating: '4.5 stars'
+      });
+    });
+
+    it('should extract multiple h-recipe elements', () => {
+      const mockRecipe1 = createMockElement('div', { class: 'h-recipe' });
+      const mockRecipe2 = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockName1 = createMockElement('h1', { class: 'p-name' }, 'Recipe 1');
+      const mockName2 = createMockElement('h1', { class: 'p-name' }, 'Recipe 2');
+      
+      mockRecipe1.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName1];
+        return [];
+      });
+      
+      mockRecipe1.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName1;
+        return null;
+      });
+      
+      mockRecipe2.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName2];
+        return [];
+      });
+      
+      mockRecipe2.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName2;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe1, mockRecipe2];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(2);
+      expect(result.microformats.hRecipe![0].name).toBe('Recipe 1');
+      expect(result.microformats.hRecipe![1].name).toBe('Recipe 2');
+    });
+
+    it('should handle h-recipe with partial data', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockIngredient = createMockElement('li', { class: 'p-ingredient' }, '1 cup flour');
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [];
+        if (selector === '.p-ingredient, [class*="p-ingredient"]') return [mockIngredient];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return null;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(1);
+      expect(result.microformats.hRecipe![0]).toEqual({
+        ingredients: ['1 cup flour']
+      });
+    });
+
+    it('should not include h-recipe without name or ingredients', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockAuthor = createMockElement('span', { class: 'p-author' }, 'Chef John');
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [];
+        if (selector === '.p-ingredient, [class*="p-ingredient"]') return [];
+        if (selector === '.p-author, [class*="p-author"]') return [mockAuthor];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return null;
+        if (selector === '.p-author, [class*="p-author"]') return mockAuthor;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(0);
+    });
+
+    it('should handle empty nutrition data', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockName = createMockElement('h1', { class: 'p-name' }, 'Test Recipe');
+      const mockNutrition = createMockElement('div', { class: 'h-nutrition' });
+      
+      mockNutrition.querySelectorAll.mockReturnValue([]);
+      mockNutrition.querySelector.mockReturnValue(null);
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName];
+        if (selector === '.h-nutrition, [class*="h-nutrition"]') return [mockNutrition];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName;
+        if (selector === '.h-nutrition, [class*="h-nutrition"]') return mockNutrition;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe).toHaveLength(1);
+      expect(result.microformats.hRecipe![0].nutrition).toBeUndefined();
+    });
+
+    it('should handle different element types for URLs and images', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      
+      const mockName = createMockElement('h1', { class: 'p-name' }, 'Test Recipe');
+      const mockImageText = createMockElement('span', { class: 'u-photo' }, 'image-url.jpg');
+      const mockUrlText = createMockElement('span', { class: 'u-url' }, 'https://example.com');
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName];
+        if (selector === '.u-photo, [class*="u-photo"]') return [mockImageText];
+        if (selector === '.u-url, [class*="u-url"]') return [mockUrlText];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName;
+        if (selector === '.u-photo, [class*="u-photo"]') return mockImageText;
+        if (selector === '.u-url, [class*="u-url"]') return mockUrlText;
+        return null;
+      });
+
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      const result = microformatExtractor.extractAll();
+      
+      expect(result.microformats.hRecipe![0].image).toBe('image-url.jpg');
+      expect(result.microformats.hRecipe![0].url).toBe('https://example.com');
     });
   });
 
@@ -586,6 +906,28 @@ describe('MicroformatExtractor', () => {
       expect(microformatExtractor.hasMicroformat('twitter')).toBe(true);
     });
 
+    it('should detect h-recipe presence', () => {
+      const mockRecipe = createMockElement('div', { class: 'h-recipe' });
+      const mockName = createMockElement('h1', { class: 'p-name' }, 'Test Recipe');
+      
+      mockRecipe.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return [mockName];
+        return [];
+      });
+      
+      mockRecipe.querySelector.mockImplementation((selector: string) => {
+        if (selector === '.p-name, [class*="p-name"]') return mockName;
+        return null;
+      });
+      
+      mockDocument.querySelectorAll.mockImplementation((selector: string) => {
+        if (selector === '.h-recipe, [class*="h-recipe"]') return [mockRecipe];
+        return [];
+      });
+
+      expect(microformatExtractor.hasMicroformat('h-recipe')).toBe(true);
+    });
+
     it('should return false for unknown microformat type', () => {
       expect(microformatExtractor.hasMicroformat('unknown' as any)).toBe(false);
     });
@@ -614,6 +956,7 @@ describe('MicroformatExtractor', () => {
           microdata: [],
           openGraph: {},
           twitter: {},
+          hRecipe: [],
           semantic: {
             headings: [],
             lists: [],
