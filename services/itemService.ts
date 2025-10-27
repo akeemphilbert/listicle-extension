@@ -297,5 +297,118 @@ export class ItemService {
   }
 }
 
+/**
+ * Background-safe item creation that bypasses Pinia
+ * Used in background script where Pinia is not initialized
+ */
+export async function createItemDirect(jsonLdData: any): Promise<ItemProjection | null> {
+  try {
+    const normalizedFields = extractNormalizedFields(jsonLdData);
+    
+    // Check for duplicates by URL
+    const existingItem = await db.itemProjections.where('url').equals(normalizedFields.url).first();
+    if (existingItem) {
+      console.log('Item already exists:', existingItem);
+      return existingItem;
+    }
+
+    // Create new item aggregate
+    const item = Item.create(
+      normalizedFields.id,
+      normalizedFields.name,
+      normalizedFields.url,
+      normalizedFields.type,
+      jsonLdData,
+      normalizedFields.image,
+      normalizedFields.description
+    );
+
+    // Emit events directly to database instead of through event store
+    const events = item.getAllUncommittedEvents();
+    
+    // Add events directly to database
+    if (events.length > 0) {
+      await db.itemEvents.bulkAdd(events);
+      for (const event of events) {
+        await db.updateItemProjection(event);
+      }
+    }
+
+    // Mark events as committed
+    item.markAllEventsAsCommitted();
+
+    // Return the projection
+    return await db.itemProjections.get(normalizedFields.id) || null;
+  } catch (error) {
+    console.error('Error creating item (direct):', error);
+    return null;
+  }
+}
+
+/**
+ * Background-safe item linking that bypasses Pinia
+ * Used in background script where Pinia is not initialized
+ */
+export async function linkItemToListDirect(itemId: string, listId: string): Promise<boolean> {
+  try {
+    await db.createTriple(itemId, 'belongs_to', listId);
+    return true;
+  } catch (error) {
+    console.error('Error linking item to list (direct):', error);
+    return false;
+  }
+}
+
+/**
+ * Helper function to extract normalized fields
+ */
+function extractNormalizedFields(jsonLd: any): {
+  id: string;
+  name: string;
+  url: string;
+  image?: string;
+  description?: string;
+  type: string;
+} {
+  // Extract ID - prefer @id, fallback to url field, then generate from URL
+  let id = jsonLd['@id'] || jsonLd.url || jsonLd.identifier;
+  if (!id && jsonLd.url) {
+    id = jsonLd.url; // Use URL as ID if no @id present
+  }
+
+  // Extract name/title
+  const name = jsonLd.name || jsonLd.title || jsonLd.headline || 'Untitled';
+
+  // Extract URL
+  const url = jsonLd.url || jsonLd['@id'] || '';
+
+  // Extract image
+  let image: string | undefined;
+  if (jsonLd.image) {
+    if (typeof jsonLd.image === 'string') {
+      image = jsonLd.image;
+    } else if (jsonLd.image.url) {
+      image = jsonLd.image.url;
+    } else if (Array.isArray(jsonLd.image) && jsonLd.image.length > 0) {
+      image = typeof jsonLd.image[0] === 'string' ? jsonLd.image[0] : jsonLd.image[0].url;
+    }
+  }
+
+  // Extract description
+  const description = jsonLd.description || jsonLd.summary || jsonLd.abstract;
+
+  // Extract type
+  const type = jsonLd['@type'] || 'Thing';
+
+  return {
+    id,
+    name,
+    url,
+    image,
+    description,
+    type,
+  };
+}
+
 // Export singleton instance
 export const itemService = new ItemService();

@@ -359,10 +359,26 @@ ${pageDetails}
 1. Review the user's current personalized lists
 2. Review the extracted microformat data from the current page
 
- Determine which list, if any, the data should be added to. Respond only with the final JSON structure requested by the user.
- The item can be added to multiple lists.
- If there is no item id use the page url as the id
- Provide a detailed reasoning process for your decision.`;
+Your task is to:
+1. Analyze the page content and identify items that should be added to lists
+2. For each item, determine:
+   - Item type (e.g., Recipe, Product, Article, etc.)
+   - Essential metadata (name, description, etc.)
+   - Which lists it belongs to (can be multiple)
+
+Response Format:
+- Return an array of objects, each containing:
+  - item: Object with id, name, url, image, description, type, and jsonLd
+  - listIds: Array of list IDs this item should be added to
+  - reasoning: String explaining why this item fits these lists
+
+Important Rules:
+1. If no item ID exists, use the page URL as the ID
+2. Items can be added to multiple lists (include all relevant list IDs)
+3. Always include a type field to categorize the item
+4. Provide clear reasoning for each list assignment
+
+Respond only with the final JSON structure as specified.`;
       // Initializing a new session must either specify both `topK` and
     // `temperature` or neither of them.
     const session = await LanguageModel.create({
@@ -404,61 +420,48 @@ ${pageDetails}
     try {
       console.log('📤 Sending prompt:', message);
       const schema = {
-        "type":"array",
+        "type": "array",
         "items": {
-          "type":"object",
+          "type": "object",
           "properties": {
-            "recipe": {
-              "type":"object",
+            "item": {
+              "type": "object",
               "properties": {
+                "id": {
+                  "type": "string",
+                },
                 "name": {
-                  "type": "string",
-                },
-                "description": {
-                  "type": "string",
-                },
-                "ingredients": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                  },
-                },
-                "instructions": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                  },
-                },
-                "image": {
                   "type": "string",
                 },
                 "url": {
                   "type": "string",
                 },
-                "prepTime": {
+                "image": {
                   "type": "string",
                 },
-                "cookTime": {
+                "description": {
                   "type": "string",
                 },
-                "totalTime": {
+                "type": {
                   "type": "string",
                 },
-                "yield": {
-                  "type": "string",
-                },
-                "author": {
-                  "type": "string",
+                "jsonLd": {
+                  "type": "object",
                 },
               },
+              "required": ["name", "type"]
             },
-            "listId": {
-              "type": "string",
+            "listIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "reasoning": {
               "type": "string",
             },
           },
+          "required": ["item", "listIds", "reasoning"]
         },
       }
       

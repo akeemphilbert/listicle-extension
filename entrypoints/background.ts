@@ -1,5 +1,6 @@
 import { userPreferences } from '../services/userPreferences';
 import { db } from '../services/database';
+import { createItemDirect, linkItemToListDirect } from '../services/itemService';
 
 export default defineBackground(async () => {
   console.log('Background script loaded');
@@ -13,28 +14,77 @@ export default defineBackground(async () => {
   browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: any) => {
     console.log('Background received message:', message.type, 'payload:', message);
     
-    if (message.type === 'get-all-lists') {
-      console.log('Processing get-all-lists request');
-      
-      (async () => {
-        try {
-          const lists = await db.listProjections.toArray();
-          console.log('Fetched lists from database:', lists);
-          const responseData = { data: { lists }, messageId: message.messageId };
-          console.log('About to send response:', responseData);
-          sendResponse(responseData);
-          console.log('sendResponse called');
-        } catch (error) {
-          console.error('Error fetching lists:', error);
-          sendResponse({ 
-            error: error instanceof Error ? error.message : String(error), 
-            messageId: message.messageId 
-          });
+    // Handle all async message processing
+    (async () => {
+      try {
+        switch (message.type) {
+          case 'get-all-lists':
+            console.log('Processing get-all-lists request');
+            const lists = await db.listProjections.toArray();
+            console.log('Fetched lists from database:', lists);
+            sendResponse({ data: { lists }, messageId: message.messageId });
+            break;
+
+          case 'create-item':
+            console.log('Processing create-item request:', message.payload.item);
+            const item = await createItemDirect(message.payload.item);
+            console.log('Item created/found:', item);
+            if (!item) {
+              sendResponse({ 
+                error: 'Failed to create item', 
+                messageId: message.messageId 
+              });
+            } else {
+              sendResponse({ 
+                data: { item }, 
+                messageId: message.messageId 
+              });
+            }
+            break;
+
+          case 'link-item-to-lists':
+            console.log('Processing link-item-to-lists request:', message.payload);
+            const { itemId, listIds } = message.payload;
+            const linkedLists: string[] = [];
+
+            // Link item to each list
+            for (const listId of listIds) {
+              try {
+                const success = await linkItemToListDirect(itemId, listId);
+                if (success) {
+                  linkedLists.push(listId);
+                }
+              } catch (linkError) {
+                console.error(`Failed to link item ${itemId} to list ${listId}:`, linkError);
+              }
+            }
+
+            sendResponse({
+              data: {
+                success: linkedLists.length > 0,
+                linkedLists
+              },
+              messageId: message.messageId
+            });
+            break;
+
+          default:
+            console.warn('Unknown message type:', message.type);
+            sendResponse({
+              error: `Unknown message type: ${message.type}`,
+              messageId: message.messageId
+            });
         }
-      })();
-      
-      return true; // Keep the channel open for async response
-    }
+      } catch (error) {
+        console.error(`Error processing ${message.type}:`, error);
+        sendResponse({ 
+          error: error instanceof Error ? error.message : String(error), 
+          messageId: message.messageId 
+        });
+      }
+    })();
+    
+    return true; // Keep the channel open for async response
   });
   
   console.log('Background message listener registered');

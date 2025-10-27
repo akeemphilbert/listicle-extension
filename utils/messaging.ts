@@ -85,6 +85,34 @@ export interface GetAllListsMessage {
   response: { lists: ListProjection[] };
 }
 
+export interface CreateItemMessage {
+  type: 'create-item';
+  payload: {
+    item: {
+      id?: string;
+      name: string;
+      url: string;
+      type: string;
+      image?: string;
+      description?: string;
+      jsonLd: any;
+    };
+  };
+  response: { item: ItemProjection | null };
+}
+
+export interface LinkItemToListsMessage {
+  type: 'link-item-to-lists';
+  payload: {
+    itemId: string;
+    listIds: string[];
+  };
+  response: {
+    success: boolean;
+    linkedLists: string[];
+  };
+}
+
 export type Message = 
   | ScanPageMessage
   | ScanPageContentMessage
@@ -98,7 +126,9 @@ export type Message =
   | ClearScanResultsMessage
   | ModelStatusMessage
   | TriggerScanMessage
-  | GetAllListsMessage;
+  | GetAllListsMessage
+  | CreateItemMessage
+  | LinkItemToListsMessage;
 
 // Helper functions for common message patterns
 export const messaging = {

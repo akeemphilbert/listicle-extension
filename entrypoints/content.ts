@@ -56,7 +56,7 @@ export default defineContentScript({
         ? `Available Lists:\n${userLists.value.map(list => `  - ${list.name} (ID: ${list.id})${list.description ? ` - ${list.description}` : ''}`).join('\n')}`
         : 'No lists available yet.';
       
-      // Send prompt to add microformats to list
+      // Process items and add them to lists
       try {
         const response = await promptApiService.sendPrompt(`add microformats to list
           Page Details: 
@@ -64,6 +64,74 @@ export default defineContentScript({
           
           ${availableListsInfo}`);
         console.log('🤖 AI Response:', response);
+
+        // Parse the response
+        let items;
+        try {
+          items = JSON.parse(response);
+          if (!Array.isArray(items)) {
+            throw new Error('Response is not an array');
+          }
+        } catch (parseError) {
+          console.error('Failed to parse AI response:', parseError);
+          return;
+        }
+
+        // Process each item
+        for (const suggestion of items) {
+          try {
+            // Validate required fields
+            if (!suggestion.item || !suggestion.listIds || !Array.isArray(suggestion.listIds)) {
+              console.error('Invalid item structure:', suggestion);
+              continue;
+            }
+
+            // Ensure item has an ID (use page URL as fallback)
+            if (!suggestion.item.id) {
+              suggestion.item.id = extractedData.url;
+            }
+
+            // Ensure item has a URL
+            if (!suggestion.item.url) {
+              suggestion.item.url = extractedData.url;
+            }
+
+            // Create or get existing item through background script
+            try {
+              console.log('Sending create-item request:', suggestion.item);
+              const createResponse = await messaging.send<CreateItemMessage>('create-item', {
+                item: suggestion.item
+              });
+              
+              if (!createResponse || !createResponse.item) {
+                console.error('Failed to create item:', suggestion.item);
+                console.error('Response:', createResponse);
+                continue;
+              }
+
+              const item = createResponse.item;
+              console.log('✅ Item created/found:', item.id);
+
+              // Link item to lists through background script
+              const linkResponse = await messaging.send<LinkItemToListsMessage>('link-item-to-lists', {
+                itemId: item.id,
+                listIds: suggestion.listIds
+              });
+
+              if (linkResponse.success) {
+                console.log(`✅ Item ${item.id} linked to lists:`, linkResponse.linkedLists);
+              } else {
+                console.error(`Failed to link item ${item.id} to any lists`);
+              }
+            } catch (error) {
+              console.error('Error processing item:', error);
+              continue;
+            }
+          } catch (itemError) {
+            console.error('Error processing item:', itemError);
+            // Continue with next item
+          }
+        }
       } catch (error) {
         console.log('⚠️ Could not send prompt:', error);
       }
