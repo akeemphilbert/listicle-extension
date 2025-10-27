@@ -4,6 +4,21 @@ import { type ListProjection } from '../services/database';
 import { ref } from 'vue';
 import { messaging } from '../utils/messaging';
 
+interface ScanResult {
+  item: {
+    id?: string;
+    name: string;
+    url: string;
+    image?: string;
+    description?: string;
+    type: string;
+    jsonLd: any;
+  };
+  listIds: string[];
+  confidence: number;
+  reasoning: string;
+}
+
 export default defineContentScript({
   matches: ['<all_urls>'],
   async main() {
@@ -58,11 +73,31 @@ export default defineContentScript({
       
       // Process items and add them to lists
       try {
-        const response = await promptApiService.sendPrompt(`add microformats to list
-          Page Details: 
-          ${JSON.stringify(extractedData.microformats)}
-          
-          ${availableListsInfo}`);
+        // Filter to recipe-relevant data only
+        const recipeData = promptApiService.filterRecipeData(extractedData.microformats);
+
+        // If recipes were found in microformats, use them in the prompt
+        const prompt = `Analyze this recipe content to determine if it should be added to any lists:
+
+Page Information:
+URL: ${extractedData.url}
+Title: ${extractedData.title}
+Description: ${extractedData.description}
+
+${recipeData.recipes.length ? `
+Found Recipes:
+${recipeData.recipes.map(recipe => `
+Name: ${recipe.name}
+${recipe.description ? `Description: ${recipe.description}` : ''}
+${recipe.cookTime ? `Cook Time: ${recipe.cookTime}` : ''}
+${recipe.cuisine ? `Cuisine: ${recipe.cuisine}` : ''}
+${recipe.ingredients?.length ? `Ingredients: ${recipe.ingredients.slice(0, 5).join(', ')}${recipe.ingredients.length > 5 ? '...' : ''}` : ''}
+Source: ${recipe.source}
+`).join('\n')}` : ''}
+
+${availableListsInfo}`;
+
+        const response = await promptApiService.sendPrompt(prompt);
         console.log('🤖 AI Response:', response);
 
         // Parse the response
@@ -83,6 +118,11 @@ export default defineContentScript({
             // Validate required fields
             if (!suggestion.item || !suggestion.listIds || !Array.isArray(suggestion.listIds)) {
               console.error('Invalid item structure:', suggestion);
+              continue;
+            }
+
+            if (suggestion.confidence < 0.94) {
+              console.log('Low confidence item, skipping:', suggestion);
               continue;
             }
 
@@ -131,6 +171,37 @@ export default defineContentScript({
             console.error('Error processing item:', itemError);
             // Continue with next item
           }
+        }
+
+        // Check if we need to scan the page
+        
+        // Only scan page if no recipes were found in microformats
+        if (items.length === 0 && !recipeData.recipes.length) {
+          console.log('No recipes found in microformats, scanning page content...');
+          const results = await promptApiService.scanPage(userLists.value, extractedData);
+          console.log('🤖 Scanned items:', results);
+
+          // Process each result
+          for (const result of results as ScanResult[]) {
+            if (result.confidence >= 0.7) {
+              try {
+                const createResponse = await messaging.send<CreateItemMessage>('create-item', {
+                  item: result.item
+                });
+                
+                if (createResponse?.item) {
+                  await messaging.send<LinkItemToListsMessage>('link-item-to-lists', {
+                    itemId: createResponse.item.id,
+                    listIds: result.listIds
+                  });
+                }
+              } catch (error) {
+                console.error('Failed to process item:', error);
+              }
+            }
+          }
+        } else if (recipeData.recipes.length) {
+          console.log('Recipes found in microformats, skipping page scan:', recipeData.recipes.length);
         }
       } catch (error) {
         console.log('⚠️ Could not send prompt:', error);

@@ -3,8 +3,9 @@
  * Integrates with Chrome's built-in Prompt API (Gemini Nano) for page analysis
  */
 
-import { microformatExtractor, ExtractedContent } from './microformatExtractor';
+import { microformatExtractor, ExtractedContent, MicroformatData } from './microformatExtractor';
 import { userPreferences, ScannedItem } from './userPreferences';
+import { ListProjection } from './database';
 import { z } from 'zod';
 
 interface PromptSession {
@@ -23,6 +24,98 @@ class PromptApiService {
   private session: any | null = null; // LanguageModelSession
   private modelAvailability: 'readily' | 'after-download' | 'downloading' | 'no' | 'unknown' = 'unknown';
   private extractedContent: ExtractedContent | null = null;
+
+  /**
+   * Extract essential fields from recipe data
+   */
+  private extractEssentialRecipeFields(data: any): {
+    name: string;
+    description?: string;
+    cookTime?: string;
+    ingredients?: string[];
+    cuisine?: string;
+  } {
+    if (!data) return { name: '' };
+
+    return {
+      name: data.name || data.headline || '',
+      description: data.description,
+      cookTime: data.cookTime || data.totalTime,
+      ingredients: Array.isArray(data.recipeIngredient) ? data.recipeIngredient : undefined,
+      cuisine: data.recipeCuisine
+    };
+  }
+
+  /**
+   * Filter microformats to only include essential recipe data
+   */
+  public filterRecipeData(microformats: MicroformatData): {
+    recipes: Array<{
+      name: string;
+      description?: string;
+      cookTime?: string;
+      ingredients?: string[];
+      cuisine?: string;
+      source: 'schema.org' | 'h-recipe';
+    }>;
+  } {
+    const recipes = [];
+
+    // Process Schema.org recipes
+    const schemaRecipes = microformats.schemaOrg?.filter((data: { '@type': string | string[] }) => 
+      data['@type'] === 'Recipe' || 
+      (Array.isArray(data['@type']) && data['@type'].includes('Recipe'))
+    ) || [];
+
+    for (const recipe of schemaRecipes) {
+      const fields = this.extractEssentialRecipeFields(recipe);
+      if (fields.name) {  // Only include if we at least have a name
+        recipes.push({ ...fields, source: 'schema.org' as const });
+      }
+    }
+
+    // Process h-recipe data
+    if (microformats.hRecipe?.length) {
+      for (const recipe of microformats.hRecipe) {
+        const fields = this.extractEssentialRecipeFields(recipe);
+        if (fields.name) {
+          recipes.push({ ...fields, source: 'h-recipe' as const });
+        }
+      }
+    }
+
+    return { recipes };
+  }
+  
+  // Response schema for item matching
+  private itemResponseSchema = {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "url": { "type": "string" },
+            "image": { "type": "string" },
+            "description": { "type": "string" },
+            "type": { "type": "string" },
+            "jsonLd": { "type": "object" }
+          },
+          "required": ["name", "type"]
+        },
+        "listIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "confidence": { "type": "number" },
+        "reasoning": { "type": "string" }
+      },
+      "required": ["item", "listIds", "confidence", "reasoning"]
+    }
+  };
 
   /**
    * Tool definition for getting user lists
@@ -142,28 +235,78 @@ class PromptApiService {
   }
 
   /**
-   * Scan a page for items relevant to the active list
+   * Scan a page for items relevant to any available lists
    */
   async scanPage(
-    listName: string,
-    listDescription?: string,
+    lists: ListProjection[], 
+    extractedData: ExtractedContent,
     tabId?: number
-  ): Promise<ScannedItem[]> {
-    try {
-      // Check if model is ready
-      if (!(await this.isModelReady())) {
-        console.warn('Model not ready for scanning');
-        return [];
-      }
+  ): Promise<Array<{
+    item: {
+      id?: string;
+      name: string;
+      url: string;
+      image?: string;
+      description?: string;
+      type: string;
+      jsonLd: any;
+    };
+    listIds: string[];
+    confidence: number;
+    reasoning: string;
+  }>> {
+    if (!this.session) {
+      throw new Error('No active session. Create a session first.');
+    }
 
-      // Extract content from the page
-      const extractedContent = microformatExtractor.extractAll();
+    try {
+      // Filter to recipe-relevant data only
+      const recipeData = this.filterRecipeData(extractedData.microformats);
       
-      
-  
-      return [];
+      const prompt = `Analyze this page to determine if its content should be added to any of these lists:
+
+Available Lists:
+${lists.map(list => `- ${list.name}${list.description ? ` (${list.description})` : ''}`).join('\n')}
+
+Page Information:
+URL: ${extractedData.url}
+Title: ${extractedData.title}
+Description: ${extractedData.description}
+
+${recipeData.recipes.length ? `
+Found Recipes:
+${recipeData.recipes.map(recipe => `
+Name: ${recipe.name}
+${recipe.description ? `Description: ${recipe.description}` : ''}
+${recipe.cookTime ? `Cook Time: ${recipe.cookTime}` : ''}
+${recipe.cuisine ? `Cuisine: ${recipe.cuisine}` : ''}
+${recipe.ingredients?.length ? `Ingredients: ${recipe.ingredients.slice(0, 5).join(', ')}${recipe.ingredients.length > 5 ? '...' : ''}` : ''}
+Source: ${recipe.source}
+`).join('\n')}` : ''}
+
+Content Preview:
+${extractedData.content}
+
+For each list:
+1. Check if any recipe matches the list's purpose
+2. If no direct matches but the list is recipe-related, analyze the content
+3. Return items with high confidence for direct matches, lower for inferred
+
+For each item found, include:
+- All relevant metadata (name, url, image, description)
+- Appropriate JSON-LD type based on the list context
+- Which lists it belongs to and why
+- Confidence score (0-1) reflecting match quality`;
+
+      // Use existing schema constraint from sendPrompt
+      const response = await this.session.prompt(prompt, {
+        responseConstraint: this.itemResponseSchema
+      });
+
+      console.log('📥 Received response:', response);
+      return JSON.parse(response);
     } catch (error) {
-      console.error('Page scan failed:', error);
+      console.error('❌ Failed to scan page:', error);
       return [];
     }
   }
@@ -377,6 +520,7 @@ Important Rules:
 2. Items can be added to multiple lists (include all relevant list IDs)
 3. Always include a type field to categorize the item
 4. Provide clear reasoning for each list assignment
+5. Give a confidence score for each item between 0 and 1 
 
 Respond only with the final JSON structure as specified.`;
       // Initializing a new session must either specify both `topK` and
@@ -460,8 +604,11 @@ Respond only with the final JSON structure as specified.`;
             "reasoning": {
               "type": "string",
             },
+            "confidence": {
+              "type": "number",
+            },
           },
-          "required": ["item", "listIds", "reasoning"]
+          "required": ["item", "listIds", "reasoning", "confidence"]
         },
       }
       
