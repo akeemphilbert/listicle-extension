@@ -1,6 +1,8 @@
 import { userPreferences } from '../services/userPreferences';
 import { db } from '../services/database';
 import { createItemDirect, linkItemToListDirect } from '../services/itemService';
+import { badgeManager } from '../services/badgeManager';
+import type { Browser } from 'webextension-polyfill';
 
 export default defineBackground(async () => {
   console.log('Background script loaded');
@@ -8,6 +10,11 @@ export default defineBackground(async () => {
   // Initialize database first
   await db.checkAndRecreateIfNeeded();
   console.log('Background database initialized');
+
+  // Listen for extension icon clicks to reset badge
+  browser.action.onClicked.addListener(async () => {
+    await badgeManager.reset();
+  });
   
   console.log('Registering background message listener');
   
@@ -53,6 +60,8 @@ export default defineBackground(async () => {
                 const success = await linkItemToListDirect(itemId, listId);
                 if (success) {
                   linkedLists.push(listId);
+                  // Increment badge count when item is successfully linked to a list
+                  await badgeManager.increment();
                 }
               } catch (linkError) {
                 console.error(`Failed to link item ${itemId} to list ${listId}:`, linkError);
