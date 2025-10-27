@@ -1,9 +1,8 @@
 <template>
   <div :class="['task-item', { 'task-item--completed': task.completed }]">
-    <BaseCheckbox
-      :model-value="task.completed"
-      @update:model-value="$emit('toggle', task.id)"
-    />
+    <div class="task-item__type-icon">
+      <span v-if="isRecipe">🍳</span>
+    </div>
     <div class="task-item__content" @click="$emit('edit', task)">
       <div class="task-item__title">{{ task.title }}</div>
       <div v-if="task.description" class="task-item__description">{{ task.description }}</div>
@@ -13,6 +12,22 @@
       </div>
     </div>
     <div class="task-item__actions">
+      <button 
+        v-if="task.url" 
+        class="task-item__action-btn" 
+        @click.stop="openUrl"
+        title="Open original URL"
+      >
+        🔗
+      </button>
+      <button 
+        v-if="isRecipe" 
+        class="task-item__action-btn" 
+        @click.stop="$emit('view-recipe', task)"
+        title="View recipe"
+      >
+        👁️
+      </button>
       <BaseButton
         variant="ghost"
         size="small"
@@ -29,8 +44,9 @@ import BaseCheckbox from '@/components/atoms/BaseCheckbox.vue';
 import BaseButton from '@/components/atoms/BaseButton.vue';
 import BaseIcon from '@/components/atoms/BaseIcon.vue';
 import type { Task } from '@/composables/useTasks';
+import { computed } from 'vue';
 
-defineProps<{
+const props = defineProps<{
   task: Task;
 }>();
 
@@ -38,7 +54,19 @@ defineEmits<{
   toggle: [id: string];
   edit: [task: Task];
   delete: [id: string];
+  'view-recipe': [task: Task];
 }>();
+
+const isRecipe = computed(() => {
+  return props.task.type === 'Recipe' || 
+         (props.task.jsonLd && props.task.jsonLd['@type'] === 'Recipe');
+});
+
+const openUrl = () => {
+  if (props.task.url) {
+    browser.tabs.create({ url: props.task.url });
+  }
+};
 
 const formatDate = (date: string) => {
   return new Date(date).toLocaleDateString('en-US', {
@@ -60,6 +88,15 @@ const formatDate = (date: string) => {
 
 .task-item:hover {
   background-color: #f9f9f9;
+}
+
+.task-item__type-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+  width: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .task-item__content {
@@ -106,9 +143,29 @@ const formatDate = (date: string) => {
   opacity: 0;
   transition: opacity 0.15s ease;
   flex-shrink: 0;
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
 }
 
 .task-item:hover .task-item__actions {
   opacity: 1;
+}
+
+.task-item__action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  font-size: 1rem;
+  transition: background-color 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-item__action-btn:hover {
+  background-color: #f5f5f5;
 }
 </style>

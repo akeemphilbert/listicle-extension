@@ -10,6 +10,11 @@ export interface Task {
   completed: boolean;
   created_at: string;
   updated_at: string;
+  url?: string;
+  type?: string;
+  jsonLd?: any;
+  description?: string;
+  due_date?: string;
 }
 
 export function useTasks(selectedListId: Ref<string | null>) {
@@ -48,6 +53,9 @@ export function useTasks(selectedListId: Ref<string | null>) {
         completed: false,
         created_at: item.created_at,
         updated_at: item.updated_at,
+        url: item.url,
+        type: item.type,
+        jsonLd: item.jsonLd,
       };
       
       tasks.value.push(newTask);
@@ -134,6 +142,9 @@ export function useTasks(selectedListId: Ref<string | null>) {
         completed: false, // We'll need to add completion tracking to items later
         created_at: item.created_at,
         updated_at: item.updated_at,
+        url: item.url,
+        type: item.type,
+        jsonLd: item.jsonLd,
       }));
     } catch (error) {
       console.error('Error loading items for list:', error);

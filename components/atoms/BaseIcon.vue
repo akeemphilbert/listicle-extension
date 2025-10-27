@@ -23,7 +23,8 @@ const iconMap: Record<string, string> = {
   check: '✓',
   inbox: '📥',
   calendar: '📅',
-  flag: '🚩'
+  flag: '🚩',
+  'arrow-left': '←'
 };
 </script>
 

@@ -5,31 +5,28 @@
         @add="showAddListModal = true"
     />
 
-    <!-- Test Controls -->
-    <div class="test-controls">
-      <button @click="triggerRecipeScan" class="test-btn" :disabled="isScanning">
-        <span v-if="isScanning">⏳</span>
-        <span v-else>🔍</span>
-        {{ isScanning ? 'Scanning...' : 'Check Microformats' }}
-      </button>
-    </div>
-
     <div class="app__content">
       <HomeView
           v-if="currentView === 'home'"
           :lists="activeListsArray"
-          :task-counts="taskCounts"
           @select-list="handleSelectList"
           @delete-list="handleDeleteList"
       />
 
       <TaskList
-          v-else-if="selectedList"
+          v-else-if="selectedList && currentView === 'list'"
           :list-name="selectedList.name"
           :tasks="tasks"
           @add-task-click="showAddItemModal = true"
           @toggle-task="toggleTask"
           @delete-task="deleteTask"
+          @view-recipe="handleViewRecipe"
+      />
+
+      <RecipeDetail
+          v-else-if="selectedRecipe && currentView === 'recipe'"
+          :task="selectedRecipe"
+          @close="handleCloseRecipe"
       />
     </div>
 
@@ -83,14 +80,12 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import Header from '@/components/organisms/Header.vue';
 import HomeView from '@/components/organisms/HomeView.vue';
 import TaskList from '@/components/organisms/TaskList.vue';
+import RecipeDetail from '@/components/organisms/RecipeDetail.vue';
 import { useEventStore } from '@/stores/eventStore';
 import { listService } from '@/services/listService';
 import { itemService } from '@/services/itemService';
-import { jsonLdConverter } from '@/services/jsonLdConverter';
 import { db, type ListProjection } from '@/services/database';
-import { useTasks } from '@/composables/useTasks';
-import { messaging } from '@/utils/messaging';
-import { microformatExtractor } from '@/services/microformatExtractor';
+import { useTasks, type Task } from '@/composables/useTasks';
 
 // Direct database access with hooks
 const activeListsArray = ref<ListProjection[]>([]);
@@ -124,24 +119,6 @@ const setupDatabaseHooks = () => {
     nextTick(() => refreshLists());
   });
   
-  // Set up hooks for item operations (to update list counts)
-  db.itemProjections.hook('creating', async () => {
-    console.log('Item created hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
-  
-  db.itemProjections.hook('updating', async () => {
-    console.log('Item updated hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
-  
-  db.itemProjections.hook('deleting', async () => {
-    console.log('Item deleted hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
   
   console.log('Database hooks set up successfully');
 };
@@ -168,7 +145,7 @@ onUnmounted(() => {
 });
 
 const selectedListId = ref<string | null>(null);
-const currentView = ref<'home' | 'list'>('home');
+const currentView = ref<'home' | 'list' | 'recipe'>('home');
 const { tasks, createTask, toggleTask, deleteTask } = useTasks(selectedListId);
 const showAddItemModal = ref(false);
 const showAddListModal = ref(false);
@@ -177,32 +154,10 @@ const newListName = ref('');
 const newListDescription = ref('');
 const itemInput = ref<HTMLInputElement | null>(null);
 const listInput = ref<HTMLInputElement | null>(null);
-const isScanning = ref(false);
-
+const selectedRecipe = ref<Task | null>(null);
 const selectedList = computed(() => {
   return activeListsArray.value.find(list => list.id === selectedListId.value) || null;
 });
-
-const taskCounts = ref<Record<string, number>>({});
-
-// Function to update task counts
-const updateTaskCounts = async () => {
-  const counts: Record<string, number> = {};
-  
-  // Count items for each list
-  for (const list of activeListsArray.value) {
-    try {
-      const items = await itemService.getItemsForList(list.id);
-      counts[list.id] = items.length;
-    } catch (error) {
-      console.error(`Error getting items for list ${list.id}:`, error);
-      counts[list.id] = 0;
-    }
-  }
-  
-  taskCounts.value = counts;
-  console.log('📊 Updated task counts:', counts);
-};
 
 const showHome = () => {
   currentView.value = 'home';
@@ -212,6 +167,16 @@ const showHome = () => {
 const handleSelectList = (id: string) => {
   selectedListId.value = id;
   currentView.value = 'list';
+};
+
+const handleViewRecipe = (task: Task) => {
+  selectedRecipe.value = task;
+  currentView.value = 'recipe';
+};
+
+const handleCloseRecipe = () => {
+  currentView.value = 'list';
+  selectedRecipe.value = null;
 };
 
 const handleDeleteList = async (listId: string) => {
@@ -243,348 +208,6 @@ const handleDeleteList = async (listId: string) => {
       console.error('Failed to delete list');
       alert('Failed to delete list. Please try again.');
     }
-  }
-};
-
-const triggerRecipeScan = async () => {
-  if (isScanning.value) return;
-  
-  try {
-    isScanning.value = true;
-    
-    // Get current tab
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tabs[0]?.id) {
-      // Get the page HTML and use the microformatExtractor service
-      const pageData = await browser.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        func: () => {
-          return {
-            title: document.title,
-            url: window.location.href,
-            html: document.documentElement.outerHTML
-          };
-        }
-      });
-
-      if (pageData && pageData[0] && pageData[0].result) {
-        const { title, url, html } = pageData[0].result;
-        
-        // Create a temporary DOM to use with the microformatExtractor service
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        
-        // Create a custom microformatExtractor instance that works with the parsed DOM
-        const customExtractor = {
-          extractAll: function() {
-            return {
-              title: doc.title || title,
-              description: this.extractDescription(),
-              url: url,
-              content: this.extractMainContent(),
-              microformats: {
-                schemaOrg: this.extractSchemaOrg(),
-                microdata: this.extractMicrodata(),
-                openGraph: this.extractOpenGraph(),
-                twitter: this.extractTwitterCards(),
-                semantic: this.extractSemanticHTML(),
-              },
-            };
-          },
-          
-          extractSchemaOrg: function() {
-            const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-            const schemas: any[] = [];
-            scripts.forEach((script: any) => {
-              try {
-                const data = JSON.parse(script.textContent || '');
-                if (Array.isArray(data)) {
-                  schemas.push(...data);
-                } else {
-                  schemas.push(data);
-                }
-              } catch (error) {
-                console.warn('Failed to parse JSON-LD:', error);
-              }
-            });
-            return schemas;
-          },
-          
-          extractMicrodata: function() {
-            const items: any[] = [];
-            const microdataElements = doc.querySelectorAll('[itemscope]');
-            microdataElements.forEach((element: any) => {
-              const item: any = {
-                type: element.getAttribute('itemtype'),
-                properties: {},
-              };
-              const properties = element.querySelectorAll('[itemprop]');
-              properties.forEach((prop: any) => {
-                const propName = prop.getAttribute('itemprop');
-                if (propName) {
-                  const value = this.getMicrodataValue(prop);
-                  if (item.properties[propName]) {
-                    if (Array.isArray(item.properties[propName])) {
-                      item.properties[propName].push(value);
-                    } else {
-                      item.properties[propName] = [item.properties[propName], value];
-                    }
-                  } else {
-                    item.properties[propName] = value;
-                  }
-                }
-              });
-              items.push(item);
-            });
-            return items;
-          },
-          
-          getMicrodataValue: function(element: any) {
-            if (element.hasAttribute('itemscope')) {
-              return element.getAttribute('itemtype') || '';
-            }
-            const tagName = element.tagName.toLowerCase();
-            if (tagName === 'meta') {
-              return element.getAttribute('content') || '';
-            } else if (tagName === 'img') {
-              return element.getAttribute('src') || '';
-            } else if (tagName === 'a') {
-              return element.getAttribute('href') || '';
-            } else if (tagName === 'time') {
-              return element.getAttribute('datetime') || element.textContent || '';
-            } else {
-              return element.textContent || '';
-            }
-          },
-          
-          extractOpenGraph: function() {
-            const og: any = {};
-            const metaTags = doc.querySelectorAll('meta[property^="og:"]');
-            metaTags.forEach((meta: any) => {
-              const property = meta.getAttribute('property');
-              const content = meta.getAttribute('content');
-              if (property && content) {
-                og[property] = content;
-              }
-            });
-            return og;
-          },
-          
-          extractTwitterCards: function() {
-            const twitter: any = {};
-            const metaTags = doc.querySelectorAll('meta[name^="twitter:"]');
-            metaTags.forEach((meta: any) => {
-              const name = meta.getAttribute('name');
-              const content = meta.getAttribute('content');
-              if (name && content) {
-                twitter[name] = content;
-              }
-            });
-            return twitter;
-          },
-          
-          extractSemanticHTML: function() {
-            return {
-              headings: this.extractHeadings(),
-              lists: this.extractLists(),
-              tables: this.extractTables(),
-            };
-          },
-          
-          extractHeadings: function() {
-            const headings: any[] = [];
-            const headingElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
-            headingElements.forEach((heading: any) => {
-              const text = heading.textContent?.trim();
-              if (text) {
-                headings.push(text);
-              }
-            });
-            return headings;
-          },
-          
-          extractLists: function() {
-            const lists: any[] = [];
-            const listElements = doc.querySelectorAll('ul, ol');
-            listElements.forEach((list: any) => {
-              const items = list.querySelectorAll('li');
-              items.forEach((item: any) => {
-                const text = item.textContent?.trim();
-                if (text) {
-                  lists.push(text);
-                }
-              });
-            });
-            return lists;
-          },
-          
-          extractTables: function() {
-            const tables: any[] = [];
-            const tableElements = doc.querySelectorAll('table');
-            tableElements.forEach((table: any) => {
-              const rows = table.querySelectorAll('tr');
-              rows.forEach((row: any) => {
-                const cells = row.querySelectorAll('td, th');
-                const rowData: any[] = [];
-                cells.forEach((cell: any) => {
-                  const text = cell.textContent?.trim();
-                  if (text) {
-                    rowData.push(text);
-                  }
-                });
-                if (rowData.length > 0) {
-                  tables.push(rowData.join(' | '));
-                }
-              });
-            });
-            return tables;
-          },
-          
-          extractDescription: function() {
-            const metaDesc = doc.querySelector('meta[name="description"]');
-            if (metaDesc) return metaDesc.getAttribute('content') || '';
-            const ogDesc = doc.querySelector('meta[property="og:description"]');
-            if (ogDesc) return ogDesc.getAttribute('content') || '';
-            const twitterDesc = doc.querySelector('meta[name="twitter:description"]');
-            if (twitterDesc) return twitterDesc.getAttribute('content') || '';
-            return '';
-          },
-          
-          extractMainContent: function() {
-            const mainSelectors = ['main', 'article', '[role="main"]', '.content', '#content', '.main-content', '.post-content', '.entry-content'];
-            for (const selector of mainSelectors) {
-              const element = doc.querySelector(selector);
-              if (element) {
-                return this.extractTextContent(element);
-              }
-            }
-            return this.extractTextContent(doc.body);
-          },
-          
-          extractTextContent: function(element: any) {
-            const clone = element.cloneNode(true);
-            const scripts = clone.querySelectorAll('script, style, noscript');
-            scripts.forEach((script: any) => script.remove());
-            let text = clone.textContent || '';
-            text = text.replace(/\s+/g, ' ').trim();
-            if (text.length > 5000) {
-              text = text.substring(0, 5000) + '...';
-            }
-            return text;
-          }
-        };
-        
-        try {
-          // Use the custom extractor that works with the parsed DOM
-          const extractedData = customExtractor.extractAll();
-          
-          // Process the results and convert to JSON-LD items
-          const microformats = extractedData.microformats;
-          const createdItems: any[] = [];
-          
-          // Convert Schema.org JSON-LD data
-          if (microformats.schemaOrg && microformats.schemaOrg.length > 0) {
-            for (const schema of microformats.schemaOrg) {
-              const jsonLd = jsonLdConverter.fromSchemaOrg(schema);
-              const item = await itemService.createItem(jsonLd);
-              if (item) {
-                createdItems.push(item);
-                
-                // Link to selected list if available
-                if (selectedListId.value) {
-                  await itemService.linkItemToList(item.id, selectedListId.value);
-                }
-              }
-            }
-          }
-          
-          // Convert Microdata to JSON-LD
-          if (microformats.microdata && microformats.microdata.length > 0) {
-            for (const microdata of microformats.microdata) {
-              const jsonLd = jsonLdConverter.fromMicrodata(microdata);
-              const item = await itemService.createItem(jsonLd);
-              if (item) {
-                createdItems.push(item);
-                
-                // Link to selected list if available
-                if (selectedListId.value) {
-                  await itemService.linkItemToList(item.id, selectedListId.value);
-                }
-              }
-            }
-          }
-          
-          // Convert Open Graph data to JSON-LD
-          if (Object.keys(microformats.openGraph || {}).length > 0) {
-            const jsonLd = jsonLdConverter.fromOpenGraph(microformats.openGraph, url);
-            const item = await itemService.createItem(jsonLd);
-            if (item) {
-              createdItems.push(item);
-              
-              // Link to selected list if available
-              if (selectedListId.value) {
-                await itemService.linkItemToList(item.id, selectedListId.value);
-              }
-            }
-          }
-          
-          // Convert Twitter Card data to JSON-LD
-          if (Object.keys(microformats.twitter || {}).length > 0) {
-            const jsonLd = jsonLdConverter.fromTwitterCard(microformats.twitter, url);
-            const item = await itemService.createItem(jsonLd);
-            if (item) {
-              createdItems.push(item);
-              
-              // Link to selected list if available
-              if (selectedListId.value) {
-                await itemService.linkItemToList(item.id, selectedListId.value);
-              }
-            }
-          }
-          
-          // Convert semantic HTML to JSON-LD
-          if (microformats.semantic && (
-            (microformats.semantic.headings?.length || 0) > 0 || 
-            (microformats.semantic.lists?.length || 0) > 0 || 
-            (microformats.semantic.tables?.length || 0) > 0
-          )) {
-            const jsonLd = jsonLdConverter.fromSemanticHtml(microformats.semantic, url);
-            const item = await itemService.createItem(jsonLd);
-            if (item) {
-              createdItems.push(item);
-              
-              // Link to selected list if available
-              if (selectedListId.value) {
-                await itemService.linkItemToList(item.id, selectedListId.value);
-              }
-            }
-          }
-          
-          // Show results
-          if (createdItems.length > 0) {
-            const itemTypes = [...new Set(createdItems.map(item => item.type))];
-            alert(`✅ Successfully created ${createdItems.length} item(s)!\n\nTypes: ${itemTypes.join(', ')}\n\nItems:\n${createdItems.map(item => `• ${item.name} (${item.type})`).join('\n')}\n\n${selectedListId.value ? 'Items have been added to the selected list.' : 'No list selected - items created but not linked to any list.'}`);
-            
-            // Manual refresh as fallback in case hooks don't fire
-            await refreshLists();
-            await updateTaskCounts();
-          } else {
-            alert('❌ No microformats found on this page.\n\nTry visiting a site with structured data like:\n• Recipe sites (allrecipes.com, foodnetwork.com)\n• News sites (bbc.com, cnn.com)\n• E-commerce sites (amazon.com, ebay.com)');
-          }
-        } catch (serviceError) {
-          throw serviceError;
-        }
-      } else {
-        alert('Failed to get page data');
-      }
-    } else {
-      alert('Could not get current tab');
-    }
-  } catch (error) {
-    console.error('Microformat scan failed:', error);
-    alert('Scan failed: ' + (error as Error).message);
-  } finally {
-    isScanning.value = false;
   }
 };
 
@@ -772,36 +395,4 @@ watch(activeListsArray, async () => {
   background-color: #c53727;
 }
 
-/* Test Controls */
-.test-controls {
-  padding: 12px 16px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #f8f9fa;
-}
-
-.test-btn {
-  width: 100%;
-  background: #FF6B6B;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: all 0.2s;
-}
-
-.test-btn:hover:not(:disabled) {
-  background: #FF5252;
-}
-
-.test-btn:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-}
 </style>

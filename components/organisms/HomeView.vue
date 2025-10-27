@@ -15,7 +15,6 @@
           <div class="list-card__icon">{{ getIcon(list.icon) }}</div>
           <div class="list-card__info">
             <h3 class="list-card__name">{{ list.name }}</h3>
-            <p class="list-card__count">{{ getTaskCount(list.id) }} items</p>
           </div>
           <button 
             class="list-card__delete"
@@ -24,6 +23,7 @@
           >
             🗑️
           </button>
+          <div class="list-card__carat">›</div>
         </div>
       </div>
     </div>
@@ -35,7 +35,6 @@ import type { ListProjection } from '@/services/database';
 
 const props = defineProps<{
   lists: ListProjection[];
-  taskCounts: Record<string, number>;
 }>();
 
 defineEmits<{
@@ -55,10 +54,6 @@ const iconMap: Record<string, string> = {
 };
 
 const getIcon = (name: string) => iconMap[name] || '📋';
-
-const getTaskCount = (listId: string) => {
-  return props.taskCounts[listId] || 0;
-};
 </script>
 
 <style scoped>
@@ -120,6 +115,7 @@ const getTaskCount = (listId: string) => {
   flex-direction: column;
   gap: 0.125rem;
   min-width: 0;
+  flex: 1;
 }
 
 .list-card__name {
@@ -132,10 +128,11 @@ const getTaskCount = (listId: string) => {
   text-overflow: ellipsis;
 }
 
-.list-card__count {
-  font-size: 0.8125rem;
-  color: #666;
-  margin: 0;
+.list-card__carat {
+  font-size: 1.5rem;
+  color: #999;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .list-card__delete {
@@ -147,10 +144,8 @@ const getTaskCount = (listId: string) => {
   border-radius: 4px;
   opacity: 0;
   transition: opacity 0.2s ease, background-color 0.2s ease;
-  position: absolute;
-  right: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
+  margin-right: 0.5rem;
+  flex-shrink: 0;
 }
 
 .list-card:hover .list-card__delete {

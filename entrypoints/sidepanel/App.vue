@@ -10,7 +10,6 @@
       <HomeView
           v-if="currentView === 'home'"
           :lists="activeListsArray"
-          :task-counts="taskCounts"
           @select-list="handleSelectList"
       />
 
@@ -161,24 +160,6 @@ const setupDatabaseHooks = () => {
     nextTick(() => refreshLists());
   });
   
-  // Set up hooks for item operations (to update list counts)
-  db.itemProjections.hook('creating', async () => {
-    console.log('Item created hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
-  
-  db.itemProjections.hook('updating', async () => {
-    console.log('Item updated hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
-  
-  db.itemProjections.hook('deleting', async () => {
-    console.log('Item deleted hook triggered');
-    await nextTick();
-    await updateTaskCounts(); // Update task counts directly
-  });
   
   console.log('Database hooks set up successfully');
 };
@@ -220,27 +201,6 @@ const showScannedItems = ref(false);
 const selectedList = computed(() => {
   return activeListsArray.value.find(list => list.id === selectedListId.value) || null;
 });
-
-const taskCounts = ref<Record<string, number>>({});
-
-// Function to update task counts
-const updateTaskCounts = async () => {
-  const counts: Record<string, number> = {};
-  
-  // Count items for each list
-  for (const list of activeListsArray.value) {
-    try {
-      const items = await itemService.getItemsForList(list.id);
-      counts[list.id] = items.length;
-    } catch (error) {
-      console.error(`Error getting items for list ${list.id}:`, error);
-      counts[list.id] = 0;
-    }
-  }
-  
-  taskCounts.value = counts;
-  console.log('📊 Updated task counts:', counts);
-};
 
 const showHome = () => {
   currentView.value = 'home';

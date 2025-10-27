@@ -2,10 +2,6 @@
   <div class="task-list">
     <div class="task-list__header">
       <h1 class="task-list__title">{{ listName }}</h1>
-      <div class="task-list__actions">
-        <button class="task-list__action-btn">💬</button>
-        <button class="task-list__action-btn">⋯</button>
-      </div>
     </div>
 
     <div class="task-list__items">
@@ -16,6 +12,7 @@
         @toggle="$emit('toggle-task', $event)"
         @edit="$emit('edit-task', $event)"
         @delete="$emit('delete-task', $event)"
+        @view-recipe="handleViewRecipe"
       />
 
       <div v-if="tasks.length === 0" class="task-list__empty">
@@ -41,12 +38,17 @@ defineProps<{
   tasks: Task[];
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   'add-task-click': [];
   'toggle-task': [id: string];
   'edit-task': [task: Task];
   'delete-task': [id: string];
+  'view-recipe': [task: Task];
 }>();
+
+const handleViewRecipe = (task: Task) => {
+  emit('view-recipe', task);
+};
 </script>
 
 <style scoped>
@@ -58,9 +60,6 @@ defineEmits<{
 }
 
 .task-list__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: 1rem 0.75rem 0.5rem 0.75rem;
 }
 
@@ -69,26 +68,6 @@ defineEmits<{
   font-weight: 700;
   color: #202020;
   margin: 0;
-}
-
-.task-list__actions {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.task-list__action-btn {
-  background: none;
-  border: none;
-  color: #666;
-  cursor: pointer;
-  padding: 0.375rem;
-  border-radius: 4px;
-  font-size: 1rem;
-  transition: background-color 0.2s;
-}
-
-.task-list__action-btn:hover {
-  background-color: #f5f5f5;
 }
 
 .task-list__items {

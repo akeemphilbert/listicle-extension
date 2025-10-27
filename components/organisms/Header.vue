@@ -12,11 +12,11 @@
       </div>
     </div>
     <div class="header__right">
+      <button class="header__icon-btn" @click="$emit('chat')">
+        <span class="icon">💬</span>
+      </button>
       <button class="header__icon-btn" @click="$emit('add')">
         <span class="icon">+</span>
-      </button>
-      <button class="header__icon-btn" @click="$emit('notifications')">
-        <span class="icon">🔔</span>
       </button>
       <button class="header__icon-btn" @click="$emit('settings')">
         <span class="icon">⚙️</span>
@@ -30,8 +30,8 @@ defineEmits<{
   'toggle-menu': [];
   home: [];
   add: [];
-  notifications: [];
   settings: [];
+  chat: [];
 }>();
 </script>
 
