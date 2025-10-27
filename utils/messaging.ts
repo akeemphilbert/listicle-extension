@@ -79,6 +79,40 @@ export interface TriggerScanMessage {
   response: { success: boolean; items?: ScannedItem[] };
 }
 
+export interface GetAllListsMessage {
+  type: 'get-all-lists';
+  payload: void;
+  response: { lists: ListProjection[] };
+}
+
+export interface CreateItemMessage {
+  type: 'create-item';
+  payload: {
+    item: {
+      id?: string;
+      name: string;
+      url: string;
+      type: string;
+      image?: string;
+      description?: string;
+      jsonLd: any;
+    };
+  };
+  response: { item: ItemProjection | null };
+}
+
+export interface LinkItemToListsMessage {
+  type: 'link-item-to-lists';
+  payload: {
+    itemId: string;
+    listIds: string[];
+  };
+  response: {
+    success: boolean;
+    linkedLists: string[];
+  };
+}
+
 export type Message = 
   | ScanPageMessage
   | ScanPageContentMessage
@@ -91,7 +125,10 @@ export type Message =
   | GetScanResultsMessage
   | ClearScanResultsMessage
   | ModelStatusMessage
-  | TriggerScanMessage;
+  | TriggerScanMessage
+  | GetAllListsMessage
+  | CreateItemMessage
+  | LinkItemToListsMessage;
 
 // Helper functions for common message patterns
 export const messaging = {
@@ -105,28 +142,43 @@ export const messaging = {
     return new Promise((resolve, reject) => {
       const messageId = Math.random().toString(36);
       
-      const responseHandler = (response: any) => {
-        if (response.messageId === messageId) {
-          browser.runtime.onMessage.removeListener(responseHandler);
+      console.log('[Messaging] Sending message:', message, 'with ID:', messageId);
+      
+      let timeoutId: any;
+      
+      try {
+        browser.runtime.sendMessage({
+          type: message,
+          payload,
+          messageId
+        }, (response: any) => {
+          console.log('[Messaging] Received response:', response);
+          
+          // Clear timeout
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          
+          if (!response) {
+            reject(new Error('No response from background script'));
+            return;
+          }
+          
           if (response.error) {
             reject(new Error(response.error));
           } else {
             resolve(response.data);
           }
-        }
-      };
-      
-      browser.runtime.onMessage.addListener(responseHandler);
-      
-      browser.runtime.sendMessage({
-        type: message,
-        payload,
-        messageId
-      }).catch(reject);
+        });
+      } catch (error) {
+        console.error('[Messaging] Error sending message:', error);
+        reject(error);
+        return;
+      }
       
       // Timeout after 30 seconds
-      setTimeout(() => {
-        browser.runtime.onMessage.removeListener(responseHandler);
+      timeoutId = setTimeout(() => {
+        console.error('[Messaging] Message timeout for:', message);
         reject(new Error('Message timeout'));
       }, 30000);
     });
@@ -136,13 +188,13 @@ export const messaging = {
    * Listen for messages
    */
   on<T extends Message>(
-    message: T['type'],
+    messageType: T['type'],
     handler: (payload: T['payload'], sender: any) => Promise<T['response']>
   ): void {
     browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-      if (message.type === message) {
+      if (message.type === messageType) {
         try {
-          const response = await handler(message.payload, sender);
+          const response = await handler(message.payload as T['payload'], sender);
           sendResponse({ data: response, messageId: message.messageId });
         } catch (error) {
           sendResponse({ error: error instanceof Error ? error.message : String(error), messageId: message.messageId });
