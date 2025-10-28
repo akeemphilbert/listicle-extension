@@ -248,6 +248,13 @@ export class ListicleDatabase extends Dexie {
    * @param object The object ID (list ID)
    */
   async createTriple(subject: string, predicate: string, object: string): Promise<void> {
+    // Check if triple already exists to prevent duplicates
+    const existing = await this.triples.where('[subject+predicate+object]').equals([subject, predicate, object]).first();
+    if (existing) {
+      // Silently skip duplicate
+      return;
+    }
+
     const triple: TripleProjection = {
       subject,
       predicate,

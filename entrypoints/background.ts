@@ -54,18 +54,28 @@ export default defineBackground(async () => {
             const { itemId, listIds } = message.payload;
             const linkedLists: string[] = [];
 
+            // Get item details first to check if we should increment badge
+            const itemProjection = await db.itemProjections.get(itemId);
+            let shouldIncrementBadge = false;
+            if (itemProjection) {
+              shouldIncrementBadge = await badgeManager.shouldCount(itemProjection.created_at);
+            }
+
             // Link item to each list
             for (const listId of listIds) {
               try {
                 const success = await linkItemToListDirect(itemId, listId);
                 if (success) {
                   linkedLists.push(listId);
-                  // Increment badge count when item is successfully linked to a list
-                  await badgeManager.increment();
                 }
               } catch (linkError) {
                 console.error(`Failed to link item ${itemId} to list ${listId}:`, linkError);
               }
+            }
+
+            // Only increment badge once per item, if it's new
+            if (shouldIncrementBadge && linkedLists.length > 0) {
+              await badgeManager.increment();
             }
 
             sendResponse({

@@ -221,6 +221,14 @@ export class ItemService {
    */
   async linkItemToList(itemId: string, listId: string): Promise<boolean> {
     try {
+      // Check if triple already exists
+      const existing = await db.triples.where('[subject+predicate+object]').equals([itemId, 'belongs_to', listId]).first();
+      if (existing) {
+        console.log(`Item ${itemId} already linked to list ${listId}, skipping duplicate`);
+        return true; // Return true since the relationship already exists
+      }
+
+      // Create the triple
       await db.createTriple(itemId, 'belongs_to', listId);
       return true;
     } catch (error) {
@@ -351,6 +359,14 @@ export async function createItemDirect(jsonLdData: any): Promise<ItemProjection 
  */
 export async function linkItemToListDirect(itemId: string, listId: string): Promise<boolean> {
   try {
+    // Check if triple already exists
+    const existing = await db.triples.where('[subject+predicate+object]').equals([itemId, 'belongs_to', listId]).first();
+    if (existing) {
+      console.log(`Item ${itemId} already linked to list ${listId}, skipping duplicate`);
+      return true; // Return true since the relationship already exists
+    }
+
+    // Create the triple
     await db.createTriple(itemId, 'belongs_to', listId);
     return true;
   } catch (error) {
